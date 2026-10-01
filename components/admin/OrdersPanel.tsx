@@ -13,7 +13,7 @@ import {
   ordersToday,
   prettyPhone,
   timeAgo,
-  whatsappOrderLink,
+  whatsappEnquiryLink,
 } from "@/lib/format";
 import { cx } from "@/lib/cx";
 import {
@@ -227,7 +227,7 @@ function OrderCard({
         </select>
 
         <a
-          href={whatsappOrderLink(order.phone, order.reference)}
+          href={whatsappEnquiryLink(order.phone, order.reference)}
           target="_blank"
           rel="noopener noreferrer"
           className="rounded-lg border border-ink-600 px-3 py-2 text-xs text-cream-200/80 transition hover:border-emerald-500/60 hover:text-emerald-300"

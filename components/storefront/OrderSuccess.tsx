@@ -1,6 +1,7 @@
 import { Button, WhatsAppButton } from "@/components/ui/Button";
 import { formatDZD, formatDateTime, prettyPhone } from "@/lib/format";
-import { CONTACT, LINKS } from "@/lib/brand";
+import { CONTACT } from "@/lib/brand";
+import { whatsappOrderLink } from "@/lib/whatsapp";
 import { DELIVERY_LABELS, SIZE_LABELS } from "@/lib/types";
 import { wilayaLabel } from "@/lib/wilayas";
 import type { Order } from "@/lib/types";
@@ -27,9 +28,10 @@ export function OrderSuccess({ order, onClose }: { order: Order; onClose: () => 
       <div className="text-center">
         <p className="font-display text-2xl font-semibold text-cream-50">Merci, c&apos;est enregistré !</p>
         <p className="mt-2 text-sm text-cream-200/75">
-          Nous vous appelons au{" "}
-          <span className="font-medium text-gold-300">{prettyPhone(order.phone)}</span> pour confirmer
-          votre commande.
+          Votre commande est enregistrée sous la référence{" "}
+          <span className="font-medium text-gold-300">{order.reference}</span>. Confirmez-la
+          en un clic sur WhatsApp ci-dessous, ou appelez-nous au{" "}
+          <span className="font-medium text-gold-300">{prettyPhone(order.phone)}</span>.
         </p>
         <p className="mt-3 inline-block rounded-full bg-gold-500/12 px-4 py-1.5 font-mono text-sm font-semibold tracking-widest text-gold-300">
           {order.reference}
@@ -79,13 +81,26 @@ export function OrderSuccess({ order, onClose }: { order: Order; onClose: () => 
         Comptez 2 à 5 jours ouvrables pour Alger et le Nord, 4 à 7 jours pour le Sud.
       </p>
 
-      <div className="flex flex-col gap-2 sm:flex-row">
+      {/* Primary CTA: send the order to the shop on WhatsApp.
+          This is the step that makes the confirmation real — the order is already
+          saved locally/server-side, but only this message reaches the shop's chat
+          with the reference attached. Styled as the dominant action on the screen
+          because skipping it means an unconfirmed order. */}
+      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/8 p-4">
         <WhatsAppButton
-          href={`${LINKS.whatsapp}?text=${encodeURIComponent(`Bonjour THALA SOURCE, je viens de commander (réf. ${order.reference}).`)}`}
-          label="Envoyer sur WhatsApp"
-          size="md"
-          className="flex-1"
+          href={whatsappOrderLink(order)}
+          label="تواصل عبر واتساب / تأكيد الطلب"
+          variant="whatsapp"
+          size="lg"
+          className="w-full"
         />
+        <p className="mt-2.5 text-center text-xs leading-relaxed text-emerald-100/70">
+          Envoyez ce message pour confirmer votre commande. Il est déjà rempli avec vos
+          informations.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
         <a
           href={`tel:${CONTACT.phoneE164}`}
           className="inline-flex flex-1 items-center justify-center rounded-full border border-ink-500/70 px-5 py-2.5 text-sm font-medium text-cream-200 transition hover:border-gold-400 hover:text-gold-200"

@@ -371,6 +371,8 @@ export function CheckoutForm({
             )}
           </Button>
 
+          {/* Set expectations: this saves the order, and the confirmation screen
+              that follows hands the customer a prefilled WhatsApp message. */}
           <p className="mt-3 text-center text-[0.7rem] text-ink-500">
             Paiement à la livraison. Aucun paiement en ligne requis.
           </p>

@@ -6,10 +6,14 @@ import type { Product } from "@/lib/types";
 /**
  * Hero section.
  *
- * Shows the brand identity, the slogan and the featured dresses. On a phone the
- * dresses sit directly under the headline (that is what converts); from `lg`
- * upwards the layout becomes a two-column editorial split.
+ * Shows the boutique name and the featured pieces. On a phone the products sit
+ * directly under the headline (that is what converts); from `lg` upwards the
+ * layout becomes a two-column editorial split.
  */
+
+/** The shop name in Arabic script, used for the bilingual hero line. */
+const BRAND_NAME_AR = "بوتيك ثالة سورس";
+
 export function Hero({ featured }: { featured: Product[] }) {
   const showcase = featured.slice(0, 2);
   const fromPrice = featured.length ? Math.min(...featured.map((p) => p.price)) : null;
@@ -32,23 +36,25 @@ export function Hero({ featured }: { featured: Product[] }) {
 
       <div className="mx-auto max-w-7xl px-4 pt-10 pb-14 sm:px-6 sm:pt-16 lg:px-8 lg:pt-20 lg:pb-20">
         <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-14">
-          {/* ---- Copy ---- */}
+          {/* ---- Copy ----
+              The client removed the category/regional tagline and the Arabic
+              subtitle, so the only descriptor here is the boutique name itself.
+              The Arabic line is the same words in Arabic script rather than a
+              separate slogan, so the two never drift apart. */}
           <div className="animate-fade-up text-center lg:text-left">
             <p className="eyebrow">{BRAND.taglineFr}</p>
 
             <h1 className="mt-4 font-display text-5xl leading-[0.95] font-semibold text-cream-50 sm:text-6xl lg:text-7xl">
               {BRAND.name}
-              <span className="mt-2 block text-gold-400">{BRAND.taglineFr}</span>
             </h1>
 
             <div className="rule-gold mx-auto mt-6 w-40 lg:mx-0" />
 
             <p className="ar mt-6 text-lg text-cream-200/80" lang="ar">
-              {BRAND.sloganAr}
+              {BRAND_NAME_AR}
             </p>
             <p className="mt-2 max-w-xl text-base text-cream-200/75 lg:text-lg">
-              {BRAND.sloganFr}. Chaque pièce est cousue main dans notre atelier et porte le
-              savoir-faire du tissage amazigh.
+              {BRAND.descriptionFr}
             </p>
 
             <div className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center lg:justify-start">

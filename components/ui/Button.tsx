@@ -22,6 +22,11 @@ const VARIANTS = {
     "hover:from-gold-300 hover:to-gold-500 hover:shadow-gold-500/30",
   secondary:
     "border border-gold-500/50 bg-gold-500/5 text-gold-200 hover:border-gold-400 hover:bg-gold-500/15",
+  /** WhatsApp green — reserved for the order-confirmation CTA, the one action
+      that must not be mistaken for ordinary navigation. */
+  whatsapp:
+    "border border-emerald-400/60 bg-emerald-500/25 text-emerald-50 shadow-lg shadow-emerald-900/30 " +
+    "hover:bg-emerald-500/40 hover:text-emerald-50",
   dark: "bg-ink-700 text-cream-100 ring-1 ring-ink-500/60 hover:bg-ink-600",
   ghost: "text-cream-200/80 hover:bg-ink-800 hover:text-cream-50",
   danger: "bg-danger/15 text-danger ring-1 ring-danger/40 hover:bg-danger/25",
@@ -47,24 +52,34 @@ export function Button({
   return <button className={cx(BASE, VARIANTS[variant], SIZES[size], className)} {...props} />;
 }
 
-/** WhatsApp / call action with its own icon, used in the header and the footer. */
+/**
+ * WhatsApp action with its own icon.
+ *
+ * `variant` is an explicit prop rather than something callers reach via `className`:
+ * `cx` only concatenates, so passing competing `bg-*`/`text-*` classes produces a
+ * winner decided by stylesheet order rather than by intent. It happened here that
+ * Tailwind emitted the gold utilities after the emerald ones, silently discarding
+ * the override.
+ */
 export function WhatsAppButton({
   href,
   label,
   className,
   size = "md",
+  variant = "secondary",
 }: {
   href: string;
   label: string;
   className?: string;
   size?: keyof typeof SIZES;
+  variant?: "secondary" | "whatsapp";
 }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className={cx(BASE, VARIANTS.secondary, SIZES[size], className)}
+      className={cx(BASE, VARIANTS[variant], SIZES[size], className)}
     >
       <WhatsAppIcon className="h-4 w-4" />
       {label}

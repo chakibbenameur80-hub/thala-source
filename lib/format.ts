@@ -75,10 +75,16 @@ export function normalizePhone(input: string): string {
   return national.slice(0, 10);
 }
 
-/** Pretty-prints a normalised number as `0555 12 34 56`. */
+/**
+ * Pretty-prints a normalised number as `0555 12 34 56`.
+ *
+ * An Algerian mobile is 10 digits: a leading `0` plus 9. The previous pattern here
+ * counted only 8 digits after the `0`, so it never matched a real number and every
+ * phone was displayed as a bare digit string.
+ */
 export function prettyPhone(normalized: string): string {
-  const m = /^0(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(normalized);
-  return m ? `${m[0].slice(0, 4)} ${m[1]} ${m[2]} ${m[3]}` : normalized;
+  const m = /^0(\d{3})(\d{2})(\d{2})(\d{2})$/.exec(normalized);
+  return m ? `${m[0].slice(0, 4)} ${m[2]} ${m[3]} ${m[4]}` : normalized;
 }
 
 /** True when the number looks like a reachable Algerian mobile (`05`, `06`, `07`). */
@@ -171,8 +177,15 @@ export function orderWilayaLabel(order: Order): string {
   return order.wilayaName || wilayaName(order.wilayaCode);
 }
 
-/** A wa.me link pre-filled with an order reference, for admin follow-up. */
-export function whatsappOrderLink(phone: string, reference: string): string {
+/**
+ * A wa.me link to the *customer*, pre-filled with an order reference.
+ *
+ * Used by the admin to follow up. Note this is the mirror image of
+ * `lib/whatsapp.ts` → `whatsappOrderLink`, which dials the shop and carries the
+ * full order summary; they are deliberately named apart so neither is mistaken
+ * for the other.
+ */
+export function whatsappEnquiryLink(phone: string, reference: string): string {
   const text = encodeURIComponent(
     `Bonjour THALA SOURCE, je souhaite avoir des informations sur ma commande ${reference}.`,
   );

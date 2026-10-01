@@ -26,6 +26,8 @@ export function SiteHeader({ onOpenCatalogue }: { onOpenCatalogue?: () => void }
             <span className="block font-display text-xl leading-none font-semibold tracking-[0.2em] text-gold-300 transition group-hover:text-gold-200">
               {BRAND.name}
             </span>
+            {/* Neutral boutique descriptor — the old tagline named a product
+                category and a region, which the client asked to remove. */}
             <span className="mt-1 block text-[0.6rem] font-light tracking-[0.28em] text-cream-300/60 uppercase">
               {BRAND.taglineFr}
             </span>

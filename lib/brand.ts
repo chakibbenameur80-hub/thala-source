@@ -9,13 +9,19 @@ export const BRAND = {
   name: "THALA SOURCE",
   /** Latin transliteration of ثالة. */
   nameLocal: "THALA",
-  taglineFr: "Les Robes Kabyles",
-  taglineAr: "الثوب القبلي",
-  sloganFr: "L'héritage kabyle, cousu pour vous",
-  sloganAr: "تراث قبلي مخيط خصيصاً لك",
+  /**
+   * The only descriptor shown anywhere in the UI.
+   *
+   * The client asked for plain boutique branding with no product-category or
+   * regional wording ("Les robes kabyles", "Robe berbère", the Arabic subtitle).
+   * Keep this a neutral boutique label: the catalogue itself communicates what is
+   * sold, and pinning a category here would have to be edited again the moment the
+   * range changes.
+   */
+  taglineFr: "Boutique Thala Source",
   descriptionFr:
-    "Robes kabyles traditionnelles et modernes, cousues main. Livraison dans les 58 wilayas, paiement à la livraison.",
-  descriptionAr: "أثواب قبلية تقليدية وعصرية، مخيطة يدوياً. التوصيل إلى 58 ولاية والدفع عند الاستلام.",
+    "Boutique en ligne. Livraison dans les 58 wilayas, paiement à la livraison.",
+  descriptionAr: "متجر إلكتروني. التوصيل إلى 58 ولاية والدفع عند الاستلام.",
 } as const;
 
 /**
@@ -24,9 +30,14 @@ export const BRAND = {
  */
 export const CONTACT = {
   /** Shown to customers, national format. */
-  phoneDisplay: "0555 12 34 56",
-  /** International format, no spaces, for `wa.me` links. */
-  phoneE164: "213555123456",
+  phoneDisplay: "0770 36 86 82",
+  /**
+   * International format, no `+` and no spaces, for `wa.me` links.
+   *
+   * This is the shop's real order line: WhatsApp is the confirmation channel, so
+   * every order the customer places deep-links a prefilled message here.
+   */
+  phoneE164: "213770368682",
   email: "contact@thalasource.dz",
   /** Instagram handle without the `@`. */
   instagram: "thala.source",
@@ -59,6 +70,10 @@ export const LINKS = {
   admin: "/admin",
   catalog: "#catalogue",
   delivery: "#livraison",
+  /**
+   * Base WhatsApp deep link. Order confirmations append `?text=<encoded message>`;
+   * the generic contact link is this bare form.
+   */
   whatsapp: `https://wa.me/${CONTACT.phoneE164}`,
   instagram: `https://instagram.com/${CONTACT.instagram}`,
 } as const;

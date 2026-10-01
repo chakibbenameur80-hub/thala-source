@@ -13,7 +13,7 @@ import { BRAND, CONTACT } from "@/lib/brand";
  */
 
 export const metadata: Metadata = {
-  title: `${BRAND.name} — ${BRAND.taglineFr} · ${BRAND.sloganFr}`,
+  title: `${BRAND.name} — ${BRAND.taglineFr}`,
   description: BRAND.descriptionFr,
   alternates: { canonical: "/" },
 };
