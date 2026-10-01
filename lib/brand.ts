@@ -1,0 +1,60 @@
+/**
+ * Brand configuration for THALA SOURCE.
+ *
+ * Everything a shop owner is likely to want to change (name, slogan, contact
+ * numbers, image paths) lives here so no component hard-codes a string.
+ */
+
+export const BRAND = {
+  name: "THALA SOURCE",
+  /** Latin transliteration of ثالة. */
+  nameLocal: "THALA",
+  taglineFr: "Les Robes Kabyles",
+  taglineAr: "الثوب القبلي",
+  sloganFr: "L'héritage kabyle, cousu pour vous",
+  sloganAr: "تراث قبلي مخيط خصيصاً لك",
+  descriptionFr:
+    "Robes kabyles traditionnelles et modernes, cousues main. Livraison dans les 58 wilayas, paiement à la livraison.",
+  descriptionAr: "أثواب قبلية تقليدية وعصرية، مخيطة يدوياً. التوصيل إلى 58 ولاية والدفع عند الاستلام.",
+} as const;
+
+/**
+ * Contact details. Replace with the real ones before going live.
+ * `phoneE164` is what the WhatsApp / call buttons dial.
+ */
+export const CONTACT = {
+  /** Shown to customers, national format. */
+  phoneDisplay: "0555 12 34 56",
+  /** International format, no spaces, for `wa.me` links. */
+  phoneE164: "213555123456",
+  email: "contact@thalasource.dz",
+  /** Instagram handle without the `@`. */
+  instagram: "thala.source",
+} as const;
+
+/** Wilaya the shop ships from — used in the "livraison depuis" line. */
+export const DEFAULT_WILAYA_CODE = 16; // Alger
+
+/**
+ * Brand assets.
+ *
+ * Drop the files into `public/images/` with exactly these names. Each one
+ * degrades gracefully: `BrandLogo` falls back to a typeset wordmark and product
+ * cards fall back to a themed placeholder, so a missing file never breaks the page.
+ */
+export const ASSETS = {
+  logo: "/images/logo.png",
+  dress1: "/images/dress-1.jpg",
+  dress2: "/images/dress-2.jpg",
+  /** Used for the share image / og card. */
+  ogImage: "/images/logo.png",
+} as const;
+
+/** Link targets, defined once so the footer and the header cannot diverge. */
+export const LINKS = {
+  admin: "/admin",
+  catalog: "#catalogue",
+  delivery: "#livraison",
+  whatsapp: `https://wa.me/${CONTACT.phoneE164}`,
+  instagram: `https://instagram.com/${CONTACT.instagram}`,
+} as const;

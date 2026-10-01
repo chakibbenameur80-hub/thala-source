@@ -1,0 +1,245 @@
+@import "tailwindcss";
+
+/* =====================================================================
+   THALA SOURCE — design tokens
+   ---------------------------------------------------------------------
+   Tailwind v4 is configured in CSS (there is no tailwind.config.js), so every
+   brand colour, font and radius is declared here as a `--color-*` /
+   `--font-*` token and becomes a real utility class:
+     bg-ink-900, text-gold-400, font-display, rounded-2xl, ...
+   ===================================================================== */
+
+@theme {
+  /* --- Neutrals: deep roasted brown/bronze ------------------------------ */
+  --color-ink-950: #120c0a;
+  --color-ink-900: #1a1210;
+  --color-ink-850: #201713;
+  --color-ink-800: #271c17;
+  --color-ink-700: #33251e;
+  --color-ink-600: #433128;
+  --color-ink-500: #5a4234;
+
+  /* --- Gold accents ----------------------------------------------------- */
+  --color-gold-200: #f6e6b4;
+  --color-gold-300: #eed894;
+  --color-gold-400: #e3c567;
+  --color-gold-500: #c9a227;
+  --color-gold-600: #a8821c;
+  --color-gold-700: #7d5f14;
+
+  /* --- Cream surfaces (cards, forms, text containers) ------------------- */
+  --color-cream-50: #fdfbf6;
+  --color-cream-100: #faf6ec;
+  --color-cream-200: #f3ecdc;
+  --color-cream-300: #e7dcc5;
+  --color-cream-400: #d6c7a8;
+
+  /* --- Semantic accents used sparingly ---------------------------------- */
+  --color-success: #34d399;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
+
+  /* --- Typography ------------------------------------------------------- */
+  --font-display: var(--font-cormorant), "Georgia", "Times New Roman", serif;
+  --font-sans: var(--font-jost), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-arabic: var(--font-cairo), "Segoe UI", "Tahoma", sans-serif;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --radius-4xl: 2rem;
+
+  /* --- Motion ----------------------------------------------------------- */
+  --ease-lux: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* =====================================================================
+   Base layer
+   ===================================================================== */
+
+@layer base {
+  * {
+    border-color: --alpha(var(--color-ink-600) / 60%);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* Offset for the sticky header when jumping to #catalogue / #livraison. */
+    scroll-padding-top: 5.5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-ink-900);
+    color: var(--color-cream-100);
+    font-family: var(--font-sans);
+    /* Subtle woven texture so large flat areas do not look like dead space. */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, --alpha(var(--color-gold-600) / 12%), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, --alpha(var(--color-ink-600) / 40%), transparent 65%);
+    background-attachment: fixed;
+  }
+
+  /* Latin body copy is French; Arabic runs must never pick up the Latin
+     letter-spacing or they will look broken. */
+  :lang(ar) {
+    font-family: var(--font-arabic);
+    letter-spacing: normal;
+  }
+
+  ::selection {
+    background-color: --alpha(var(--color-gold-500) / 35%);
+    color: var(--color-cream-50);
+  }
+
+  /* Visible, on-brand focus ring for keyboard users only. */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-400);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Keep number inputs free of the spinners — they only get in the way here. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    appearance: textfield;
+  }
+}
+
+/* =====================================================================
+   Component utilities
+   ===================================================================== */
+
+@layer components {
+  /* Small caps label used above section titles. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--color-gold-400);
+  }
+
+  /* Hairline gold rule, a recurring motif in the identity. */
+  .rule-gold {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      --alpha(var(--color-gold-500) / 55%),
+      transparent
+    );
+  }
+
+  /* Text rendered in Arabic: correct font + direction, never letter-spaced. */
+  .ar {
+    font-family: var(--font-arabic);
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+
+  /* Cream panel: the "text container" surface the brief asks for. */
+  .panel-cream {
+    background-color: var(--color-cream-50);
+    color: var(--color-ink-900);
+    border-radius: var(--radius-4xl);
+  }
+}
+
+/* =====================================================================
+   Animations
+   ===================================================================== */
+
+@keyframes ts-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ts-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ts-scale-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ts-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@utility animate-fade-up {
+  animation: ts-fade-up 0.6s var(--ease-lux) both;
+}
+
+@utility animate-fade-in {
+  animation: ts-fade-in 0.4s var(--ease-lux) both;
+}
+
+@utility animate-scale-in {
+  animation: ts-scale-in 0.28s var(--ease-lux) both;
+}
+
+/* Loading placeholder used while images decode. */
+@utility skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ink-800) 25%,
+    var(--color-ink-700) 37%,
+    var(--color-ink-800) 63%
+  );
+  background-size: 200% 100%;
+  animation: ts-shimmer 1.6s ease-in-out infinite;
+}
+
+/* =====================================================================
+   Accessibility
+   ===================================================================== */
+
+/* Content that is only announced by screen readers. */
+@utility sr-only-focusable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
