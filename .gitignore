@@ -45,6 +45,12 @@ yarn-error.log*
 /public/uploads/*
 !/public/uploads/.gitkeep
 
+# Source photos dropped in with their original UUID filenames. They are kept on
+# disk but not committed: the tracked copies are the renamed files the app
+# actually requests (logo.jpg, dress-1.jpg, dress-2.jpg), so committing these
+# too would only duplicate ~180 KB per deploy.
+/public/images/*-*-*-*-*.jpg
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

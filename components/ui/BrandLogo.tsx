@@ -8,7 +8,7 @@ import { cx } from "@/lib/cx";
 /**
  * The brand logo.
  *
- * Uses `public/images/logo.png` when it exists. If that file is missing (fresh
+ * Uses `public/images/logo.jpg` when it exists. If that file is missing (fresh
  * clone, or the image was never dropped in) the component falls back to a
  * typeset wordmark built from the brand colours, so the header is never broken.
  *
@@ -35,16 +35,19 @@ export function BrandLogo({
   return (
     <span className={cx("inline-flex items-center", className)}>
       <span className="relative block shrink-0 overflow-hidden rounded-xl ring-1 ring-gold-500/30">
-        <Image
-          src={ASSETS.logo}
-          alt={`${BRAND.name} — ${BRAND.taglineFr}`}
-          width={variant === "mark" ? 48 : 44}
-          height={variant === "mark" ? 48 : 44}
-          priority={priority}
-          onError={() => setFailed(true)}
-          className="h-11 w-11 object-contain sm:h-12 sm:w-12"
-          unoptimized
-        />
+{/* The logo artwork is portrait (976x1074), not square. `object-cover`
+              with a centre bias fills the square badge without letterboxing the
+              wordmark; `object-contain` left visible bars above and below. */}
+          <Image
+            src={ASSETS.logo}
+            alt={`${BRAND.name} — ${BRAND.taglineFr}`}
+            width={variant === "mark" ? 48 : 44}
+            height={variant === "mark" ? 48 : 44}
+            priority={priority}
+            onError={() => setFailed(true)}
+            className="h-11 w-11 object-cover object-[center_35%] sm:h-12 sm:w-12"
+            unoptimized
+          />
       </span>
       {variant === "full" && (
         <span className="sr-only">

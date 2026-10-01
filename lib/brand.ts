@@ -41,13 +41,17 @@ export const DEFAULT_WILAYA_CODE = 16; // Alger
  * Drop the files into `public/images/` with exactly these names. Each one
  * degrades gracefully: `BrandLogo` falls back to a typeset wordmark and product
  * cards fall back to a themed placeholder, so a missing file never breaks the page.
+ *
+ * The logo is a photograph, so it stays JPEG. Converting it to PNG inflated it
+ * from 91 KB to 1.2 MB for no visual gain, which matters for an asset that loads
+ * on every page.
  */
 export const ASSETS = {
-  logo: "/images/logo.png",
+  logo: "/images/logo.jpg",
   dress1: "/images/dress-1.jpg",
   dress2: "/images/dress-2.jpg",
   /** Used for the share image / og card. */
-  ogImage: "/images/logo.png",
+  ogImage: "/images/logo.jpg",
 } as const;
 
 /** Link targets, defined once so the footer and the header cannot diverge. */
