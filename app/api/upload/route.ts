@@ -1,40 +1,40 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { denyUnauthenticated } from "@/lib/api";
 import { getAdminSupabase, isSupabaseConfigured } from "@/lib/db/supabase";
+import { prepareImage, MAX_IMAGE_BYTES } from "@/lib/images";
+import { deleteStoredImage } from "@/lib/storage";
 
 /**
- * `POST /api/upload` — image upload for the admin product form.
+ * `POST /api/upload` — stores a product photo in Supabase Storage.
  *
- * Two backends, picked automatically:
+ * There is deliberately **no filesystem fallback**. On Vercel the server
+ * filesystem is read-only and ephemeral, so `public/uploads` can never work
+ * there; returning a red "not writable" message was the previous behaviour and it
+ * left the admin with no way forward. Now, if Supabase is not configured the
+ * route says exactly which variables are missing, which is actionable.
  *
- *   - **Supabase configured** → the file goes to the `product-images` Storage
- *     bucket and the public URL is returned. This is the path that works on
- *     Vercel, where the server filesystem is read-only.
- *   - **Local mode** → the file is written to `public/uploads/`, which works in
- *     `next dev` on your own machine. On Vercel this returns `501` with an
- *     explanatory message instead of pretending to have succeeded.
- *
- * Either way the admin can always paste an image URL manually, so uploading is
- * a convenience and never a hard requirement.
+ * Every upload is a real object in the `product-images` bucket, so the returned
+ * URL is permanent and can be stored on the product row.
  */
 
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 4 * 1024 * 1024; // 4 MB
 const BUCKET = "product-images";
-const ALLOWED: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/avif": "avif",
-};
 
 export async function POST(request: Request) {
   const denied = await denyUnauthenticated();
   if (denied) return denied;
+
+  if (!isSupabaseConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          "Stockage d'images non configuré. Renseignez NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY et ADMIN_TOKEN, puis créez le compartiment « product-images ».",
+      },
+      { status: 503 },
+    );
+  }
 
   let form: FormData;
   try {
@@ -45,66 +45,101 @@ export async function POST(request: Request) {
 
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Aucun fichier reçu." }, { status: 400 });
+    return NextResponse.json({ error: "Veuillez sélectionner une image." }, { status: 400 });
   }
   if (file.size === 0) {
     return NextResponse.json({ error: "Fichier vide." }, { status: 400 });
   }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "Image trop lourde (4 Mo maximum)." }, { status: 413 });
-  }
-
-  const extension = ALLOWED[file.type];
-  if (!extension) {
+  // Reject early on the raw upload so an oversized photo is refused before it is
+  // decoded; `prepareImage` enforces the limit again on the decoded output.
+  if (file.size > MAX_IMAGE_BYTES * 2) {
     return NextResponse.json(
-      { error: "Format non supporté. Utilisez JPG, PNG, WEBP ou AVIF." },
-      { status: 415 },
+      { error: "Image trop volumineuse. Taille maximale : 10 MB." },
+      { status: 413 },
     );
   }
 
-  // Random name: never trust the client filename (path traversal, collisions,
-  // double extensions such as `x.php.jpg`).
-  const filename = `${randomUUID()}.${extension}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
-
-  if (isSupabaseConfigured()) {
-    try {
-      const supabase = getAdminSupabase();
-      const { error } = await supabase.storage.from(BUCKET).upload(filename, bytes, {
-        contentType: file.type,
-        // `upsert: false` — the name is random, so a collision is not expected.
-        upsert: false,
-      });
-      if (error) throw error;
-
-      const { data } = supabase.storage.from(BUCKET).getPublicUrl(filename);
-      return NextResponse.json({ url: data.publicUrl, backend: "supabase" }, { status: 201 });
-    } catch (error) {
-      console.error("[thala] upload Supabase:", error);
-      return NextResponse.json(
-        {
-          error:
-            "Envoi vers Supabase impossible. Vérifiez que le bucket « product-images » existe et est public.",
-        },
-        { status: 500 },
-      );
-    }
+  let prepared: Awaited<ReturnType<typeof prepareImage>>;
+  try {
+    prepared = await prepareImage(file);
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Image illisible.";
+    const status = /volumineuse/i.test(message) ? 413 : /pris en charge/i.test(message) ? 415 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 
+  const supabase = getAdminSupabase();
+
+  // The object path is the only thing that makes collisions impossible, so the
+  // client's filename is discarded entirely: no path traversal, no double
+  // extensions, and no chance of `x.php.jpg`.
+  const path = `products/${randomUUID()}.webp`;
+
   try {
-    // `process.cwd()` is the project root in `next dev`.
-    const dir = path.join(process.cwd(), "public", "uploads");
-    await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, filename), bytes);
-    return NextResponse.json({ url: `/uploads/${filename}`, backend: "local" }, { status: 201 });
-  } catch (error) {
-    console.error("[thala] upload local:", error);
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, prepared.bytes, {
+        contentType: prepared.contentType,
+        // The name is a fresh UUID, so overwriting is never intended.
+        upsert: false,
+        cacheControl: "31536000",
+      });
+    if (error) throw error;
+  } catch (cause) {
+    console.error("[thala] upload storage:", cause);
     return NextResponse.json(
       {
         error:
-          "Le dossier public n'est pas accessible en écriture (attendu sur Vercel). Collez l'URL de l'image, ou configurez Supabase Storage.",
+          "Échec du téléchargement de l'image. Vérifiez que le compartiment « product-images » existe et que ADMIN_TOKEN est une clé service_role.",
       },
-      { status: 501 },
+      { status: 502 },
     );
+  }
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+
+  return NextResponse.json(
+    {
+      url: data.publicUrl,
+      // Lets the admin UI report what actually happened to the file it picked.
+      bytes: prepared.bytes.byteLength,
+      width: prepared.width,
+      height: prepared.height,
+    },
+    { status: 201 },
+  );
+}
+
+/**
+ * `DELETE /api/upload` — removes a stored photo.
+ *
+ * Called when the admin deletes a photo from a product, and when a product that
+ * owned the only reference to a photo is deleted. `deleteStoredImage` refuses to
+ * touch anything that is not one of our own Storage objects, so a URL that
+ * points elsewhere (or one of the repo's own `/images/...` assets) is a no-op
+ * rather than a failed request.
+ */
+export async function DELETE(request: Request) {
+  const denied = await denyUnauthenticated();
+  if (denied) return denied;
+
+  let url = "";
+  try {
+    const body = (await request.json()) as { url?: unknown };
+    url = typeof body.url === "string" ? body.url.trim() : "";
+  } catch {
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+  }
+
+  if (!url) {
+    return NextResponse.json({ error: "URL de l'image manquante." }, { status: 400 });
+  }
+
+  try {
+    const removed = await deleteStoredImage(url);
+    return NextResponse.json({ removed });
+  } catch (cause) {
+    console.error("[thala] delete storage:", cause);
+    return NextResponse.json({ error: "Suppression de l'image impossible." }, { status: 502 });
   }
 }

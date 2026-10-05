@@ -111,6 +111,30 @@ export async function deleteProduct(id: string): Promise<void> {
   local.writeSync({ ...shop, products: shop.products.filter((p) => p.id !== id) });
 }
 
+/**
+ * Deletes a stored image.
+ *
+ * Only meaningful with Supabase: in local mode the browser holds the catalogue
+ * and the images were never on the server, so there is nothing to clean up. The
+ * server ignores URLs that are not objects we uploaded, so calling this on one of
+ * the repo's own `/images/...` assets is a harmless no-op.
+ *
+ * Never throws. Callers are already showing the user a success state, and failing
+ * here would leave them staring at an error for something cosmetic.
+ */
+export async function removeImage(url: string): Promise<void> {
+  if (!IS_SUPABASE) return;
+  try {
+    await fetch("/api/upload", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  } catch {
+    // Best effort: see above.
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Orders
  * ------------------------------------------------------------------ */

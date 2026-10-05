@@ -54,9 +54,13 @@ export class LocalStoreDriver implements StoreDriver {
     } catch (error) {
       // QuotaExceededError is the realistic failure here (5 MB limit). Surface
       // it instead of silently losing the order.
+      //
+      // Note this only affects local mode. In local mode images are never
+      // uploaded — `/api/upload` requires Supabase — so a full quota means the
+      // catalogue itself has grown, not that a photo was added.
       throw new Error(
         error instanceof Error && error.name === "QuotaExceededError"
-          ? "Stockage local plein : déshabillez les images ou utilisez des liens."
+          ? "Stockage local plein : configurez Supabase pour passer à une base de données partagée."
           : "Impossible d'enregistrer les données.",
       );
     }
