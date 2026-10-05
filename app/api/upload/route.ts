@@ -1,21 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { denyUnauthenticated } from "@/lib/api";
-import { getAdminSupabase, isSupabaseConfigured } from "@/lib/db/supabase";
+import { denyUnauthenticated, serverError } from "@/lib/api";
+import {
+  adminTokenMissing,
+  getAdminSupabase,
+  SupabaseStoreDriver,
+} from "@/lib/db/supabase";
+import { isSupabaseAdminConfigured, isSupabaseConfigured } from "@/lib/db/config";
 import { prepareImage, MAX_IMAGE_BYTES } from "@/lib/images";
 import { deleteStoredImage } from "@/lib/storage";
 
 /**
- * `POST /api/upload` — stores a product photo in Supabase Storage.
+ * `POST   /api/upload` â€” stores a product photo in Supabase Storage.
+ * `DELETE /api/upload` â€” removes a stored photo that nothing references any more.
  *
  * There is deliberately **no filesystem fallback**. On Vercel the server
- * filesystem is read-only and ephemeral, so `public/uploads` can never work
- * there; returning a red "not writable" message was the previous behaviour and it
- * left the admin with no way forward. Now, if Supabase is not configured the
- * route says exactly which variables are missing, which is actionable.
+ * filesystem is read-only and ephemeral, so `public/uploads` can never work there;
+ * returning a red "not writable" message was the previous behaviour and it left
+ * the admin with no way forward. Now, if Supabase is not configured the route says
+ * exactly which variables are missing, which is actionable.
  *
- * Every upload is a real object in the `product-images` bucket, so the returned
- * URL is permanent and can be stored on the product row.
+ * Every upload is a real object in the `product-images` bucket, so the returned URL
+ * is permanent and can be stored on the product row.
  */
 
 export const dynamic = "force-dynamic";
@@ -30,10 +36,17 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Stockage d'images non configuré. Renseignez NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY et ADMIN_TOKEN, puis créez le compartiment « product-images ».",
+          "Stockage d'images non configurأ©. Renseignez NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY et ADMIN_TOKEN, puis crأ©ez le compartiment آ« product-images آ».",
       },
       { status: 503 },
     );
+  }
+
+  // Checked separately from `isSupabaseConfigured`: without the service-role key
+  // the upload cannot succeed at all, and the resulting RLS error ("new row violates
+  // row-level security") reads like a database problem rather than a missing secret.
+  if (!isSupabaseAdminConfigured()) {
+    return NextResponse.json({ error: adminTokenMissing() }, { status: 503 });
   }
 
   let form: FormData;
@@ -45,7 +58,7 @@ export async function POST(request: Request) {
 
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Veuillez sélectionner une image." }, { status: 400 });
+    return NextResponse.json({ error: "Veuillez sأ©lectionner une image." }, { status: 400 });
   }
   if (file.size === 0) {
     return NextResponse.json({ error: "Fichier vide." }, { status: 400 });
@@ -90,7 +103,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Échec du téléchargement de l'image. Vérifiez que le compartiment « product-images » existe et que ADMIN_TOKEN est une clé service_role.",
+          "أ‰chec du tأ©lأ©chargement de l'image. Vأ©rifiez que le compartiment آ« product-images آ» existe et que ADMIN_TOKEN est une clأ© service_role.",
       },
       { status: 502 },
     );
@@ -111,13 +124,17 @@ export async function POST(request: Request) {
 }
 
 /**
- * `DELETE /api/upload` — removes a stored photo.
+ * `DELETE /api/upload` â€” removes a stored photo.
  *
- * Called when the admin deletes a photo from a product, and when a product that
- * owned the only reference to a photo is deleted. `deleteStoredImage` refuses to
- * touch anything that is not one of our own Storage objects, so a URL that
- * points elsewhere (or one of the repo's own `/images/...` assets) is a no-op
- * rather than a failed request.
+ * Two refusals, both deliberate:
+ *   - a URL that is not one of our own Storage objects (a repo `/images/...` asset,
+ *     or someone else's host) is never touched;
+ *   - a photo still referenced by a product is never touched. The seed catalogue
+ *     deliberately reuses its two covers, so "delete this image" has to be answered
+ *     against the catalogue rather than against the record being edited.
+ *
+ * The check runs against the database on every call: it is the only thing standing
+ * between a mistimed click and a broken photo on the storefront.
  */
 export async function DELETE(request: Request) {
   const denied = await denyUnauthenticated();
@@ -128,18 +145,35 @@ export async function DELETE(request: Request) {
     const body = (await request.json()) as { url?: unknown };
     url = typeof body.url === "string" ? body.url.trim() : "";
   } catch {
-    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
   }
 
   if (!url) {
     return NextResponse.json({ error: "URL de l'image manquante." }, { status: 400 });
   }
+  if (!isSupabaseAdminConfigured()) {
+    return NextResponse.json({ error: adminTokenMissing() }, { status: 503 });
+  }
 
   try {
+    const driver = new SupabaseStoreDriver();
+    const holders = await driver.productsUsingImage(url);
+    if (holders.length > 0) {
+      // Not an error: the admin asked for something that is in use. Say so plainly
+      // so the UI can explain it rather than showing a red box.
+      return NextResponse.json(
+        {
+          removed: false,
+          reason: "encore utilisأ©e",
+          products: holders.map((p) => p.title),
+        },
+        { status: 409 },
+      );
+    }
+
     const removed = await deleteStoredImage(url);
     return NextResponse.json({ removed });
   } catch (cause) {
-    console.error("[thala] delete storage:", cause);
-    return NextResponse.json({ error: "Suppression de l'image impossible." }, { status: 502 });
+    return serverError("suppression de l'image", cause);
   }
 }

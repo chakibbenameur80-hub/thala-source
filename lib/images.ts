@@ -13,7 +13,12 @@
  *
  * Output is always WebP at `CONTENT_TYPE`, which is why the stored object path
  * ends in `.webp` regardless of what the admin picked.
+ *
+ * `server-only` because `sharp` is a native module: bundling it for the browser
+ * would fail the build, and there is no client-side reason to decode an image.
  */
+
+import "server-only";
 
 import sharp from "sharp";
 import type { Metadata } from "sharp";

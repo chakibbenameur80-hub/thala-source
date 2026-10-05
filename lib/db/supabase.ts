@@ -1,42 +1,73 @@
+﻿import "server-only";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { defaultShippingRates } from "@/lib/shipping";
 import { normalizeShopData, type StoreDriver } from "@/lib/db/schema";
+import { isSupabaseAdminConfigured, supabaseUrl } from "@/lib/db/config";
 import type { ShopData } from "@/lib/types";
 
 /**
  * Production driver: Supabase (Postgres + Storage).
  *
- * Enable it by setting both public env vars in `.env.local` (or in the Vercel
- * project settings) and running `supabase/schema.sql` in the SQL editor:
+ * ## `server-only`
+ *
+ * The `import "server-only"` on the first line is a build-time guard, not a
+ * comment: if any client component ever imports this module, `next build` fails
+ * with "This module cannot be imported from a Client Component module". That is
+ * deliberate. This file reads `ADMIN_TOKEN`, the project's **service-role** key,
+ * and a service-role key in the browser is a full bypass of Row Level Security â€”
+ * anyone could rewrite the catalogue or read every customer's order.
+ *
+ * The browser reaches the database only through Route Handlers, which check the
+ * admin session cookie first (see `lib/api.ts`).
+ *
+ * ## Enabling it
+ *
+ * Set the public pair so the storefront can read the catalogue, plus
+ * `ADMIN_TOKEN` for anything that writes, then run `supabase/schema.sql` once in
+ * the Supabase SQL editor:
  *
  *   NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
  *   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+ *   ADMIN_TOKEN=eyJ...            <- service_role, server settings only
  *
- * The RLS policies shipped in `supabase/schema.sql` are what make this safe:
- * anyone may read the catalogue and insert an order, but only the holder of the
- * `ADMIN_TOKEN` secret may update products, orders or shipping rates.
+ * The anon key is deliberately public: RLS is what protects the data, and
+ * `supabase/schema.sql` grants it read-only access to the catalogue.
  */
 
 const ORDERS_TABLE = "orders";
 const PRODUCTS_TABLE = "products";
 const SHIPPING_TABLE = "shipping_rates";
 
-export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
+/**
+ * Missing-admin-configuration message.
+ *
+ * Named separately from the read path's error because the two failures mean
+ * different things to whoever has to fix them, and the fix is different: this one
+ * is always `ADMIN_TOKEN`, which the read path does not need.
+ */
+export function adminTokenMissing(): string {
+  return isSupabaseAdminConfigured()
+    ? ""
+    : "ADMIN_TOKEN (clأ© service_role) est manquant. Ajoutez-le dans les variables d'environnement Vercel, puis redأ©ployez.";
 }
 
 let cachedAnon: SupabaseClient | null = null;
 let cachedAdmin: SupabaseClient | null = null;
 
+/**
+ * Public, read-only client.
+ *
+ * RLS decides what this can see: the catalogue and the shipping rates, nothing
+ * else. The orders table is invisible to it by design.
+ */
 export function getSupabase(): SupabaseClient {
   if (cachedAnon) return cachedAnon;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseUrl();
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error(
-      "Supabase n'est pas configuré. Renseignez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      "Supabase n'est pas configurأ©. Renseignez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.",
     );
   }
   cachedAnon = createClient(url, key, {
@@ -46,20 +77,20 @@ export function getSupabase(): SupabaseClient {
 }
 
 /**
- * Client used for every write.
+ * Service-role client, for every write and for reading orders.
  *
- * `ADMIN_TOKEN` is the project's **service-role** key (server settings only —
- * never `NEXT_PUBLIC_`, or it would be readable by any visitor). It bypasses RLS,
- * which is what lets the admin edit the catalogue. When it is absent we fall back
- * to the anon key, and the writes simply fail if the policies do not allow them —
- * a loud failure is better than a silently unauthenticated admin.
+ * Bypasses RLS, which is why it must never be constructed from client code. When
+ * `ADMIN_TOKEN` is absent this throws rather than silently falling back to the
+ * anon key: a silent fallback turns "you forgot to set a variable" into "your
+ * writes are rejected by RLS", which reads like a database bug instead of a
+ * missing secret.
  */
 export function getAdminSupabase(): SupabaseClient {
-  if (!process.env.ADMIN_TOKEN) return getSupabase();
+  if (!isSupabaseAdminConfigured()) throw new Error(adminTokenMissing());
   if (cachedAdmin) return cachedAdmin;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseUrl();
   if (!url) throw new Error("NEXT_PUBLIC_SUPABASE_URL est manquant.");
-  cachedAdmin = createClient(url, process.env.ADMIN_TOKEN, {
+  cachedAdmin = createClient(url, process.env.ADMIN_TOKEN!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return cachedAdmin;
@@ -68,8 +99,51 @@ export function getAdminSupabase(): SupabaseClient {
 export class SupabaseStoreDriver implements StoreDriver {
   readonly mode = "supabase" as const;
 
-  async read(): Promise<ShopData> {
+  /**
+   * Public read: catalogue + shipping rates, no orders.
+   *
+   * Uses the anon client, so it works on the storefront without any secret
+   * being involved. Deliberately does **not** read `orders` â€” the anon key cannot,
+   * and asking for it would make every public request fail.
+   */
+  async readPublic(): Promise<ShopData> {
     const supabase = getSupabase();
+
+    const [products, shipping] = await Promise.all([
+      supabase.from(PRODUCTS_TABLE).select("*").order("created_at", { ascending: false }),
+      supabase.from(SHIPPING_TABLE).select("*").order("wilaya_code", { ascending: true }),
+    ]);
+
+    // A failure here (missing table, bad key, RLS) should surface loudly rather
+    // than silently showing an empty shop.
+    for (const [name, result] of [
+      ["products", products],
+      ["shipping_rates", shipping],
+    ] as const) {
+      if (result.error) {
+        throw new Error(
+          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exأ©cutأ© supabase/schema.sql ?`,
+        );
+      }
+    }
+
+    return normalizeShopData({
+      products: (products.data ?? []).map(rowToProduct),
+      // Orders are admin-only; the storefront never needs them.
+      orders: [],
+      shipping: shipping.data ?? defaultShippingRates(),
+    });
+  }
+
+  /**
+   * Full read, including orders â€” admin only.
+   *
+   * Uses the service-role client because RLS grants order reads to nothing but
+   * `service_role`. Callers must be behind the admin session check; see
+   * `GET /api/shop`, which is the only route that exposes this to a browser.
+   */
+  async read(): Promise<ShopData> {
+    const supabase = getAdminSupabase();
 
     const [products, orders, shipping] = await Promise.all([
       supabase.from(PRODUCTS_TABLE).select("*").order("created_at", { ascending: false }),
@@ -77,8 +151,6 @@ export class SupabaseStoreDriver implements StoreDriver {
       supabase.from(SHIPPING_TABLE).select("*").order("wilaya_code", { ascending: true }),
     ]);
 
-    // A failure here (missing table, bad key, RLS) should surface loudly rather
-    // than silently show an empty shop.
     for (const [name, result] of [
       ["products", products],
       ["orders", orders],
@@ -86,7 +158,7 @@ export class SupabaseStoreDriver implements StoreDriver {
     ] as const) {
       if (result.error) {
         throw new Error(
-          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exécuté supabase/schema.sql ?`,
+          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exأ©cutأ© supabase/schema.sql ?`,
         );
       }
     }
@@ -130,20 +202,20 @@ export class SupabaseStoreDriver implements StoreDriver {
     const results = await Promise.all([productUpsert, shippingUpsert, productDelete]);
     const failed = results.find((r) => r.error);
     if (failed?.error) {
-      throw new Error(`Écriture Supabase impossible : ${failed.error.message}`);
+      throw new Error(`أ‰criture Supabase impossible : ${failed.error.message}`);
     }
   }
 
   async insertOrder(order: ShopData["orders"][number]): Promise<void> {
     const supabase = getAdminSupabase();
     const { error } = await supabase.from(ORDERS_TABLE).insert(orderToRow(order));
-    if (error) throw new Error(`Commande non enregistrée : ${error.message}`);
+    if (error) throw new Error(`Commande non enregistrأ©e : ${error.message}`);
   }
 
   async updateOrderStatus(id: string, status: string): Promise<void> {
     const supabase = getAdminSupabase();
     const { error } = await supabase.from(ORDERS_TABLE).update({ status }).eq("id", id);
-    if (error) throw new Error(`Mise à jour impossible : ${error.message}`);
+    if (error) throw new Error(`Mise أ  jour impossible : ${error.message}`);
   }
 
   async deleteOrder(id: string): Promise<void> {
@@ -168,11 +240,37 @@ export class SupabaseStoreDriver implements StoreDriver {
 
   async putShipping(rates: ShopData["shipping"]): Promise<void> {
     const supabase = getAdminSupabase();
-    const { error } = await supabase.from(SHIPPING_TABLE).upsert(
-      rates.map((r) => ({ wilaya_code: r.wilayaCode, home: r.home, office: r.office })),
-      { onConflict: "wilaya_code" },
-    );
+    const { error } = await supabase
+      .from(SHIPPING_TABLE)
+      .upsert(
+        rates.map((r) => ({ wilaya_code: r.wilayaCode, home: r.home, office: r.office })),
+        { onConflict: "wilaya_code" },
+      );
     if (error) throw new Error(`Enregistrement des tarifs impossible : ${error.message}`);
+  }
+
+  /**
+   * Products whose `images` array still contains `url`.
+   *
+   * The check that makes image deletion safe. An image can legitimately be
+   * referenced by more than one product (the seed catalogue reuses its two
+   * covers), so "delete this object" has to be answered against the current
+   * catalogue, not against the record the admin happened to be editing.
+   */
+  async productsUsingImage(url: string): Promise<{ id: string; title: string }[]> {
+    const supabase = getAdminSupabase();
+    const { data, error } = await supabase
+      .from(PRODUCTS_TABLE)
+      .select("id, title, images")
+      .contains("images", JSON.stringify([url]));
+    if (error) {
+      // Refusing to delete is the safe failure mode: an orphaned object costs
+      // storage, a deleted-but-referenced image is a broken photo on the shop.
+      throw new Error(`Vérification des références impossible : ${error.message}`);
+    }
+    return (data ?? [])
+      .map((row) => ({ id: String(row.id ?? ""), title: String(row.title ?? "") }))
+      .filter((row) => row.id !== "");
   }
 }
 
@@ -186,7 +284,7 @@ export class SupabaseStoreDriver implements StoreDriver {
 
 type Row = Record<string, unknown>;
 
-function productToRow(p: ShopData["products"][number]): Row {
+export function productToRow(p: ShopData["products"][number]): Row {
   return {
     id: p.id,
     title: p.title,
@@ -203,7 +301,7 @@ function productToRow(p: ShopData["products"][number]): Row {
   };
 }
 
-function rowToProduct(row: Row): Row {
+export function rowToProduct(row: Row): Row {
   return {
     id: row.id,
     title: row.title,
@@ -259,3 +357,6 @@ function rowToOrder(row: Row): Row {
     note: row.note ?? undefined,
   };
 }
+
+/** Re-exported so server code has one import surface for the driver. */
+export { isSupabaseConfigured } from "@/lib/db/config";

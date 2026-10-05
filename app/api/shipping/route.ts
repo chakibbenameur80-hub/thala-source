@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { denyIfLocalMode, denyUnauthenticated, serverError } from "@/lib/api";
 import { isSupabaseConfigured, SupabaseStoreDriver } from "@/lib/db/supabase";
 import { defaultShippingRates } from "@/lib/shipping";
 import type { ShippingRate } from "@/lib/types";
 
-/** `GET /api/shipping` — public: wilaya rates. */
+/** `GET /api/shipping` â€” public: wilaya rates. */
 export const dynamic = "force-dynamic";
 
 export async function GET() {
@@ -15,14 +15,14 @@ export async function GET() {
     return NextResponse.json({ shipping: defaultShippingRates(), source: "defaults" });
   }
   try {
-    const { shipping } = await new SupabaseStoreDriver().read();
+    const { shipping } = await new SupabaseStoreDriver().readPublic();
     return NextResponse.json({ shipping, source: "supabase" });
   } catch (error) {
     return serverError("lecture tarifs", error);
   }
 }
 
-/** `PUT /api/shipping` — admin: replace rates. */
+/** `PUT /api/shipping` â€” admin: replace rates. */
 export async function PUT(request: Request) {
   const denied = await denyUnauthenticated() ?? denyIfLocalMode();
   if (denied) return denied;
@@ -31,7 +31,7 @@ export async function PUT(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
   }
 
   const rates = Array.isArray(body) ? body : (body as { rates?: unknown })?.rates;

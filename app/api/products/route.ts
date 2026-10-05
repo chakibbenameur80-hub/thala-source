@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { denyIfLocalMode, denyUnauthenticated, serverError } from "@/lib/api";
-import { isSupabaseConfigured, SupabaseStoreDriver } from "@/lib/db/supabase";
+import {
+  adminTokenMissing,
+  isSupabaseConfigured,
+  SupabaseStoreDriver,
+} from "@/lib/db/supabase";
+import { isSupabaseAdminConfigured } from "@/lib/db/config";
 import { seedProducts } from "@/lib/seed";
 import type { Product } from "@/lib/types";
 
@@ -19,7 +24,9 @@ export async function GET() {
     return NextResponse.json({ products: seedProducts(), source: "seed" });
   }
   try {
-    const { products } = await new SupabaseStoreDriver().read();
+    // `readPublic`, not `read`: this endpoint is unauthenticated, and the orders
+    // table is invisible to the anon key by design.
+    const { products } = await new SupabaseStoreDriver().readPublic();
     return NextResponse.json({ products, source: "supabase" });
   } catch (error) {
     return serverError("lecture produits", error);
@@ -29,6 +36,10 @@ export async function GET() {
 export async function POST(request: Request) {
   const denied = await denyUnauthenticated() ?? denyIfLocalMode();
   if (denied) return denied;
+
+  if (!isSupabaseAdminConfigured()) {
+    return NextResponse.json({ error: adminTokenMissing() }, { status: 503 });
+  }
 
   let product: Product;
   try {

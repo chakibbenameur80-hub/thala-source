@@ -6,10 +6,10 @@ import { cx } from "@/lib/cx";
 /**
  * Product image with a graceful failure state.
  *
- * Deliberately a plain `<img>` rather than `next/image`:
- * the admin can paste *any* image URL, and `next/image` would require listing
- * every possible host in `images.remotePatterns`. Since these images are already
- * optimised by whoever hosts them, bypassing the Next optimiser loses nothing.
+ * Deliberately a plain `<img>` rather than `next/image`: images are served from
+ * Supabase Storage, so `next/image` would need that host in `images.remotePatterns`
+ * and its optimiser would re-encode photos that `lib/images.ts` has already
+ * normalised to WebP at 1600px. Optimising again costs bytes and saves nothing.
  *
  * If the file is missing, a themed placeholder is shown instead of the broken
  * image icon browsers display by default.

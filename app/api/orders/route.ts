@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { wilayaName } from "@/lib/wilayas";
 import { calculateShipping, defaultShippingRates } from "@/lib/shipping";
 import { createId, createOrderReference } from "@/lib/id";
@@ -8,13 +8,13 @@ import { validateCheckout } from "@/lib/validation";
 import type { Order, Product, ShippingRate } from "@/lib/types";
 
 /**
- * `POST /api/orders` — public order placement.
+ * `POST /api/orders` â€” public order placement.
  *
  * Two jobs:
  *   1. Validate the payload server-side (never trust the browser).
  *   2. **Recompute the money server-side.** The unit price comes from the
  *      catalogue and the shipping fee from the wilaya rate table, never from the
- *      request body — otherwise anyone could POST `unitPrice: 1`.
+ *      request body â€” otherwise anyone could POST `unitPrice: 1`.
  *
  * Behaviour depends on the configured backend:
  *   - Supabase configured: the order is inserted server-side and returned.
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   if (throttled(ip)) {
     return NextResponse.json(
-      { error: "Trop de demandes. Merci de réessayer dans une minute." },
+      { error: "Trop de demandes. Merci de rأ©essayer dans une minute." },
       { status: 429 },
     );
   }
@@ -57,12 +57,12 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
   }
 
   const parsed = validateCheckout(body);
   if (!parsed.ok) {
-    return NextResponse.json({ error: "Données invalides.", fields: parsed.errors }, { status: 422 });
+    return NextResponse.json({ error: "Donnأ©es invalides.", fields: parsed.errors }, { status: 422 });
   }
   const input = parsed.value;
 
@@ -77,13 +77,13 @@ export async function POST(request: Request) {
   let shipping: ShippingRate[];
   if (isSupabaseConfigured()) {
     try {
-      const data = await new SupabaseStoreDriver().read();
+      const data = await new SupabaseStoreDriver().readPublic();
       products = data.products;
       shipping = data.shipping;
     } catch (error) {
       console.error("[thala] commande: lecture catalogue impossible", error);
       return NextResponse.json(
-        { error: "Service momentanément indisponible. Merci de réessayer." },
+        { error: "Service momentanأ©ment indisponible. Merci de rأ©essayer." },
         { status: 503 },
       );
     }
@@ -146,10 +146,13 @@ export async function POST(request: Request) {
   if (isSupabaseConfigured()) {
     try {
       await new SupabaseStoreDriver().insertOrder(order);
-    } catch (error) {
-      console.error("[thala] commande: insertion impossible", error);
+    } catch (cause) {
+      console.error("[thala] commande: insertion impossible", cause);
       return NextResponse.json(
-        { error: "Commande non enregistrée. Merci de réessayer." },
+        {
+          error:
+            "Commande non enregistrée. Vérifiez que ADMIN_TOKEN est défini dans les variables Vercel, puis réessayez.",
+        },
         { status: 503 },
       );
     }

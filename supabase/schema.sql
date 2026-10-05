@@ -9,15 +9,22 @@
 --
 -- How the app authenticates
 -- -------------------------
---   Browser (public)  → NEXT_PUBLIC_SUPABASE_ANON_KEY   (read-only, RLS applies)
+--   Browser (public)  → NEXT_PUBLIC_SUPABASE_ANON_KEY   (read the catalogue only)
 --   Server (admin)    → ADMIN_TOKEN                     (service_role, bypasses RLS)
 --
--- The dashboard's write requests go through Next.js Route Handlers that check the
--- admin session cookie *before* touching Supabase, and they use ADMIN_TOKEN. The
--- anon key is therefore never used for a write and can stay public.
+-- Every write goes through a Next.js Route Handler that checks the admin session
+-- cookie *before* touching Supabase, and those handlers use ADMIN_TOKEN. The anon
+-- key is therefore never used for a write and can stay public: RLS grants it
+-- SELECT on `products` and `shipping_rates` and nothing else.
+--
+-- Reading the orders table also requires ADMIN_TOKEN, which is why the dashboard
+-- fetches its data from `GET /api/shop` rather than querying PostgREST from the
+-- browser — the orders table is invisible to the public key by design.
 --
 --   ⚠  Never put ADMIN_TOKEN in a NEXT_PUBLIC_* variable. Next.js inlines those
 --      into the browser bundle, which would publish your service-role key.
+--      `lib/db/supabase.ts` carries `import "server-only"` to make that mistake
+--      a build failure rather than a published credential.
 -- =============================================================================
 
 create extension if not exists "pgcrypto";
@@ -91,21 +98,93 @@ create index if not exists orders_status_idx    on public.orders (status);
 
 
 -- =============================================================================
+-- Seed catalogue
+-- =============================================================================
+-- Without this the database is empty and the storefront shows nothing the moment
+-- Supabase goes live, because the previous catalogue only ever existed in each
+-- visitor's `localStorage`.
+--
+-- `on conflict do nothing` on the primary key makes this safe to re-run and safe
+-- to run against a catalogue that has already been edited: existing rows are never
+-- touched. This is the same guarantee the admin's "Importer le catalogue local"
+-- button gives, applied here for a fresh install.
+--
+-- The two extra dresses reuse the seed photos on purpose, exactly as `lib/seed.ts`
+-- does — replace them with real product shots from `/admin/products`. Note that the
+-- first and third rows share `/images/dress-1.jpg`, which is why image deletion
+-- checks the catalogue for other references before removing an object.
+
+insert into public.products
+  (id, title, subtitle, description, price, compare_at_price, images, sizes, featured, in_stock, created_at, updated_at)
+values
+  ('seed_robe_iferhounen', 'Robe Kablye Iferhounen', 'Brodé main — noir & or',
+   'Robe kabyle traditionnelle en velours noir, brodée à la main aux fils dorés.'
+   || E'\nTaille cintrée, jupe ample, doublure intérieure douce. Parfaite pour les fêtes et les cérémonies.'
+   || E'\nFabriquée sur commande dans notre atelier de Tizi Ouzou.',
+   12500, 15000, '["/images/dress-1.jpg"]', '["S","M","L","XL","CUSTOM"]', true, true,
+   '2026-01-05T09:00:00Z', '2026-01-05T09:00:00Z'),
+
+  ('seed_robe_atlas', 'Robe Kablye Atlas', 'Tissus Amazigh — rouge & bronze',
+   'Robe kabyle moderne en tissues amazighs, coupe droite et manches longues.'
+   || E'\nTissu résistant, motifs géométriques traditionnels brodés au fil de bronze.'
+   || E'\nIdéale au quotidien comme pour une sortie habillée.',
+   9800, null, '["/images/dress-2.jpg"]', '["S","M","L","XL"]', true, true,
+   '2026-01-05T09:00:00Z', '2026-01-05T09:00:00Z'),
+
+  ('seed_robe_djurdjura', 'Robe Djurdjura Perles', 'Blanc nacré — broderie fine',
+   'Robe d''inspiration djurdjura, base crème et broderie nacrée sur le plastron.'
+   || E'\nCoupe fluide, très confortable à porter au quotidien.'
+   || E'\nTaille sur mesure disponible sur demande.',
+   11500, 13500, '["/images/dress-1.jpg"]', '["M","L","XL","CUSTOM"]', false, true,
+   '2026-01-05T09:00:00Z', '2026-01-05T09:00:00Z'),
+
+  ('seed_robe_tizi', 'Robe Tizi Ouzou Broderie', 'Vert profond — fil d''argent',
+   'Robe longue en velours vert avec broderie au fil d''argent, signée de notre atelier.'
+   || E'\nIdéale pour le mariage et les fêtes de l''Aïd.'
+   || E'\nLivraison partout en Algérie, paiement à la livraison.',
+   16900, null, '["/images/dress-2.jpg"]', '["S","M","L","XL","CUSTOM"]', false, true,
+   '2026-01-05T09:00:00Z', '2026-01-05T09:00:00Z')
+on conflict (id) do nothing;
+
+
+-- =============================================================================
 -- Row Level Security
 -- =============================================================================
--- The rule throughout: the anon key may READ the catalogue and INSERT orders,
--- and may do nothing else. Every product/rate write and every order update or
--- delete requires the service-role key, which bypasses RLS — and that key only
--- ever exists inside a Route Handler guarded by the admin session cookie.
+-- The rule, stated as simply as possible: the anon key may READ the catalogue and
+-- the shipping rates. Nothing else. Every write — products, orders, shipping
+-- rates, and every Storage object — requires the service-role key, which bypasses
+-- RLS, and that key only ever exists inside a Route Handler guarded by the admin
+-- session cookie.
+--
+-- Why the public key cannot insert orders
+-- -----------------------------------------
+-- An earlier version of this file granted `anon` an INSERT policy on `orders`, on
+-- the reasoning that "a visitor must be able to place an order". It does not need
+-- it. Order placement goes through `POST /api/orders`, which validates the payload
+-- and **recomputes every price server-side** before inserting with the service-role
+-- key. The anon INSERT policy was therefore pure attack surface: with nothing but
+-- the public key, anyone could POST directly to PostgREST and write fabricated
+-- orders with an arbitrary `total`, poisoning the dashboard and the revenue
+-- figures. It has been removed.
+--
+-- The `authenticated` write policies are gone for the same reason. The app has no
+-- Supabase Auth — admin identity is an httpOnly cookie checked in a Route Handler —
+-- so no browser ever holds the `authenticated` role and those policies granted
+-- nothing. But if anyone later enables Supabase Auth on this project (magic link,
+-- a customer login), every signed-in visitor would instantly inherit full write
+-- access to the catalogue, the rate table and the order history. `service_role`
+-- needs none of them.
 
 alter table public.products       enable row level security;
 alter table public.shipping_rates enable row level security;
 alter table public.orders         enable row level security;
 
--- Dropped first so this script can be re-run without "policy already exists".
+-- Dropped first so this script can be re-run, and so that re-running it *tightens*
+-- an installation that was created from an older, looser version of this file.
 drop policy if exists products_select_public     on public.products;
 drop policy if exists products_admin_update      on public.products;
 drop policy if exists products_admin_delete      on public.products;
+drop policy if exists products_admin_insert      on public.products;
 drop policy if exists shipping_select_public     on public.shipping_rates;
 drop policy if exists shipping_admin_update      on public.shipping_rates;
 drop policy if exists shipping_admin_insert      on public.shipping_rates;
@@ -114,8 +193,11 @@ drop policy if exists orders_insert_public       on public.orders;
 drop policy if exists orders_admin_update        on public.orders;
 drop policy if exists orders_admin_delete        on public.orders;
 drop policy if exists orders_admin_read          on public.orders;
+drop policy if exists orders_update_public       on public.orders;
+drop policy if exists orders_delete_public       on public.orders;
 
 -- Public catalogue -----------------------------------------------------------
+-- Read-only, and the only thing the public key can do in Postgres.
 create policy products_select_public
   on public.products for select
   to anon, authenticated
@@ -126,66 +208,14 @@ create policy shipping_select_public
   to anon, authenticated
   using (true);
 
--- A visitor may place an order from the storefront. This is the single write the
--- public key is allowed, and it is limited to INSERT — a visitor cannot read,
--- update or delete orders, so they cannot enumerate other customers.
-create policy orders_insert_public
-  on public.orders for insert
-  to anon, authenticated
-  with check (true);
+-- The orders table intentionally has **no** policy for `anon` or `authenticated`.
+-- With RLS enabled and no matching policy, every statement against it returns
+-- zero rows and every write is rejected — which is exactly what is wanted:
+-- a visitor can place an order (through the Route Handler that recomputes the
+-- prices) and cannot read, forge or delete anyone else's.
 
--- Admin writes. These exist for completeness and for a future Supabase-auth-based
--- admin. The current app uses ADMIN_TOKEN (service_role), which bypasses RLS
--- entirely, so these policies are not what authorises the dashboard today.
--- These exist for completeness, and for a future Supabase-auth-based admin. They
--- deliberately grant nothing to the `anon` role, which is the only role the
--- browser ever holds.
---
--- They do NOT authorise the current dashboard: that path uses ADMIN_TOKEN
--- (service_role), which bypasses RLS, and the Route Handler checks the admin
--- session cookie before it calls Supabase at all. Written as explicit per-command
--- grants rather than `for all` so each action is readable at a glance.
-create policy products_admin_update
-  on public.products for update
-  to authenticated
-  using (true)
-  with check (true);
-
-create policy products_admin_delete
-  on public.products for delete
-  to authenticated
-  using (true);
-
-create policy shipping_admin_update
-  on public.shipping_rates for update
-  to authenticated
-  using (true)
-  with check (true);
-
-create policy shipping_admin_delete
-  on public.shipping_rates for delete
-  to authenticated
-  using (true);
-
-create policy shipping_admin_insert
-  on public.shipping_rates for insert
-  to authenticated
-  with check (true);
-
-create policy orders_admin_update
-  on public.orders for update
-  to authenticated
-  using (true)
-  with check (true);
-
-create policy orders_admin_delete
-  on public.orders for delete
-  to authenticated
-  using (true);
-
--- Reads of an order are the admin dashboard's job alone. `to authenticated` with
--- `using (false)` means: no authenticated visitor may read the orders table
--- through the public API, so order history cannot be enumerated from the browser.
+-- Orders are read by `service_role` only. Expressed as a policy rather than left
+-- implicit so the intent is readable here rather than inferred from its absence.
 create policy orders_admin_read
   on public.orders for select
   to service_role

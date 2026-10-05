@@ -1,3 +1,11 @@
+// Run via `npm run verify:images`, not `npx tsx`.
+//
+// That wrapper adds `--conditions=react-server`, and this file depends on it:
+// `lib/images.ts` carries `import "server-only"`, and the `server-only` package
+// resolves to its `react-server` export (an empty module) under that condition but
+// to a throwing module otherwise. Next.js always sets the condition when it
+// compiles a Server Component; a bare `tsx` run does not, and dies on import.
+// The guard is working as designed here — just confusing without the flag.
 import sharp from "sharp";
 import { prepareImage, MAX_IMAGE_BYTES } from "../lib/images";
 

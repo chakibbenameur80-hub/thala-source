@@ -1,13 +1,23 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Spinner } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { MultiChipGroup, TextArea, TextField } from "@/components/ui/Field";
 import { ProductImage } from "@/components/ui/ProductImage";
 import { EmptyState, PanelError } from "@/components/admin/OrdersPanel";
 import { useShop } from "@/components/admin/useShop";
-import { createProduct, deleteProduct, removeImage, updateProduct } from "@/lib/services/shop";
+import {
+  createProduct,
+  deleteProduct,
+  importProducts,
+  removeImage,
+  updateProduct,
+} from "@/lib/services/shop";
+import { isLocalMode } from "@/lib/services/shop";
+import { compressForUpload, isAllowedImageType } from "@/lib/imageClient";
+import { readRawShop, parseStoredShop } from "@/lib/db/local";
+import { seedProducts } from "@/lib/seed";
 import { discountPercent, formatDZD, hasRealDiscount } from "@/lib/format";
 import { SIZES, SIZE_LABELS } from "@/lib/types";
 import type { Product, ShopData, Size } from "@/lib/types";
@@ -25,7 +35,6 @@ type ProductDraft = Omit<Product, "id" | "createdAt" | "updatedAt">;
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp";
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 /** Blank draft used when the "add" form is opened. */
 function blankDraft(): ProductDraft {
@@ -62,6 +71,8 @@ export function ProductsPanel({ initial }: { initial: ShopData }) {
   const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<string | null>(null);
 
   if (error) return <PanelError message={error} onRetry={refresh} />;
 
@@ -79,26 +90,73 @@ export function ProductsPanel({ initial }: { initial: ShopData }) {
     }
   }
 
+  /**
+   * Moves this browser's catalogue into Postgres.
+   *
+   * Reads `localStorage` first because that is where the shop's history actually
+   * lives; falls back to the built-in seed catalogue on a browser that never made
+   * an edit, so a fresh database can still be filled. The server skips ids that
+   * already exist, so pressing the button twice is harmless.
+   */
+  async function handleImport() {
+    setImporting(true);
+    setActionError(null);
+    setImportReport(null);
+    try {
+      const stored = parseStoredShop(readRawShop());
+      const source = stored?.products.length ? stored.products : seedProducts();
+      const result = await importProducts(source);
+      setImportReport(
+        result.imported > 0
+          ? `${result.imported} produit${result.imported > 1 ? "s" : ""} importé${
+              result.imported > 1 ? "s" : ""
+            }${result.skipped > 0 ? `, ${result.skipped} déjà présent${result.skipped > 1 ? "s" : ""}` : ""}.`
+          : "Tous les produits de ce navigateur sont déjà dans la base.",
+      );
+      await refresh();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Import impossible.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-cream-300/60">
           {data.products.length} produit{data.products.length > 1 ? "s" : ""} au catalogue.
         </p>
-        <Button onClick={() => setEditor({ draft: blankDraft(), isNew: true })}>
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden="true"
-          >
-            <path d="M12 5v14m-7-7h14" strokeLinecap="round" />
-          </svg>
-          Ajouter une robe
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* One-time migration out of `localStorage`. Hidden in local mode, where
+              there is no database to import into. */}
+          {!isLocalMode() ? (
+            <Button variant="ghost" disabled={importing} onClick={handleImport}>
+              {importing ? <Spinner /> : null}
+              {importing ? "Import…" : "Importer le catalogue local"}
+            </Button>
+          ) : null}
+          <Button onClick={() => setEditor({ draft: blankDraft(), isNew: true })}>
+            <svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14m-7-7h14" strokeLinecap="round" />
+            </svg>
+            Ajouter une robe
+          </Button>
+        </div>
       </div>
+
+      {importReport ? (
+        <p className="rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {importReport}
+        </p>
+      ) : null}
 
       {actionError ? (
         <p role="alert" className="rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -243,11 +301,43 @@ function ProductForm({
    */
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  /** Preview of the file currently in flight, before the server has a URL for it. */
+  const [pending, setPending] = useState<{ preview: string; name: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  /**
+   * Photos this product had before the edit. The difference between this and
+   * `draft.images` is exactly what the save is allowed to delete.
+   */
+  const originalImages = useRef<string[]>(isNew ? [] : [...initial.images]);
+
+  /**
+   * Objects uploaded during this form session.
+   *
+   * If the admin saves, they are referenced by the product and must stay. If they
+   * walk away, nothing points at them and they are pure storage cost — so the
+   * cleanup on unmount removes them. `committed` is the flag that separates the
+   * two outcomes, and it has to be a ref: the cleanup runs during unmount, where
+   * setting state would be pointless.
+   */
+  const sessionUploads = useRef<string[]>([]);
+  const committed = useRef(false);
 
   function patch<K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
+
+  // Photos uploaded then abandoned (the modal was closed, not saved). Best effort:
+  // an orphan costs a few kilobytes, and the endpoint refuses anything still in use.
+  useEffect(() => {
+    // Safe to capture the array here: it is only ever `push`ed into, never
+    // reassigned, so this reference sees every upload made after mount.
+    const uploads = sessionUploads.current;
+    return () => {
+      if (committed.current) return;
+      for (const url of uploads) void removeImage(url);
+    };
+  }, []);
 
   /**
    * Appends an already-uploaded image.
@@ -267,35 +357,32 @@ function ProductForm({
       setError("Cette photo est déjà dans la liste.");
       return;
     }
+    sessionUploads.current.push(clean);
     patch("images", [...draft.images, clean]);
     setError(null);
   }
 
   /**
-   * Removes a photo from the draft and deletes the underlying object.
+   * Removes a photo from the draft. **Nothing is deleted yet.**
    *
-   * The UI updates first and the network call is fire-and-forget: the admin
-   * should not be blocked on storage latency, and a leftover object costs storage
-   * while a rejected removal costs nothing. The service call is best-effort for
-   * the same reason.
-   *
-   * If the admin closes the form without saving, the object is already gone — an
-   * orphaned image costs a few kilobytes, whereas deferring the delete would mean
-   * tracking it across a cancelled edit.
+   * Deleting the object here would be wrong: the product row still references it
+   * until the admin saves, so a cancelled edit — or a failed save — would leave a
+   * live product pointing at a photo that no longer exists. The removal is instead
+   * applied after a successful write, where the server can check that nothing else
+   * references the same object first.
    */
   function dropImage(url: string) {
     patch(
       "images",
       draft.images.filter((i) => i !== url),
     );
-    void removeImage(url);
   }
 
   async function handleUpload(file: File) {
     // Client-side guard so an obviously wrong file fails instantly with a clear
     // message, without uploading anything. The server repeats every one of these
     // checks — this is convenience, never the security boundary.
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    if (!isAllowedImageType(file.type)) {
       setError("Format d'image non pris en charge. Utilisez JPG, PNG ou WEBP.");
       setUploadStatus(null);
       return;
@@ -310,9 +397,19 @@ function ProductForm({
     setError(null);
     setUploadStatus("Téléchargement…");
 
+    // Immediate preview, so the admin sees their photo before the round trip. The
+    // object URL is revoked as soon as the real URL (or a failure) replaces it.
+    const preview = URL.createObjectURL(file);
+    setPending({ preview, name: file.name });
+
     try {
+      // Vercel rejects request bodies over ~4.5 MB before the route handler runs,
+      // so a full-resolution phone photo has to be shrunk here or it never arrives.
+      // The server still decodes and re-encodes whatever it receives.
+      const payload = await compressForUpload(file);
+
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", payload, payload.name);
       const response = await fetch("/api/upload", { method: "POST", body: form });
 
       const data: unknown = await response.json().catch(() => null);
@@ -339,6 +436,8 @@ function ProductForm({
       setError("Échec du téléchargement de l'image. Vérifiez votre connexion et réessayez.");
       setUploadStatus(null);
     } finally {
+      URL.revokeObjectURL(preview);
+      setPending(null);
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
     }
@@ -376,6 +475,16 @@ function ProductForm({
         // `isNew: false` alongside an id.
         await updateProduct(productId!, clean);
       }
+
+      // The product row now holds the new list, so anything it used to reference
+      // and no longer does is genuinely unreferenced — unless another product
+      // shares it, which the server re-checks before removing anything. Doing this
+      // only after a successful save is what keeps a failed edit from breaking a
+      // live product's photo.
+      committed.current = true;
+      const dropped = originalImages.current.filter((url) => !clean.images.includes(url));
+      for (const url of dropped) void removeImage(url);
+
       await onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Enregistrement impossible.");
@@ -399,7 +508,7 @@ function ProductForm({
         <div className="space-y-3">
           <p className="eyebrow">Photos</p>
 
-          {draft.images.length > 0 ? (
+          {draft.images.length > 0 || pending ? (
             <ul className="grid grid-cols-3 gap-2">
               {draft.images.map((image) => (
                 <li key={image} className="relative">
@@ -428,6 +537,18 @@ function ProductForm({
                   ) : null}
                 </li>
               ))}
+
+              {/* The picked file, shown while it is still being uploaded. There is no
+                  URL yet, so this is a local object URL and it carries no remove
+                  button — cancelling means waiting a moment. */}
+              {pending ? (
+                <li className="relative opacity-60">
+                  <ProductImage src={pending.preview} alt="" className="aspect-4/5 w-full rounded-xl" />
+                  <span className="absolute inset-x-0 bottom-0 rounded-b-xl bg-ink-950/85 py-1 text-center text-[0.55rem] text-cream-200">
+                    {pending.name.slice(0, 22)}
+                  </span>
+                </li>
+              ) : null}
             </ul>
           ) : (
             <p className="rounded-xl border border-dashed border-ink-600 p-6 text-center text-xs text-cream-300/50">

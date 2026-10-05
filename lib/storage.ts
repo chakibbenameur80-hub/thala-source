@@ -1,4 +1,7 @@
-import { getAdminSupabase, isSupabaseConfigured } from "@/lib/db/supabase";
+import "server-only";
+
+import { getAdminSupabase } from "@/lib/db/supabase";
+import { isSupabaseAdminConfigured, supabaseUrl } from "@/lib/db/config";
 
 /**
  * Supabase Storage helpers for product photos.
@@ -15,13 +18,13 @@ const BUCKET = "product-images";
  *
  * Every URL produced by `/api/upload` starts with exactly this string, which is
  * what makes it safe to delete: we only ever remove objects we created. Anything
- * else — a `/images/robe.jpg` that ships with the repo, or a URL on someone
- * else's host — is recognised as foreign and left alone.
+ * else â€” a `/images/robe.jpg` that ships with the repo, or a URL on someone
+ * else's host â€” is recognised as foreign and left alone.
  */
 export function storageUrlPrefix(): string | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseUrl();
   if (!url) return null;
-  return `${url.replace(/\/+$/, "")}/storage/v1/object/public/${BUCKET}/`;
+  return `${url}/storage/v1/object/public/${BUCKET}/`;
 }
 
 /**
@@ -70,7 +73,7 @@ export function isStoredImage(url: string): boolean {
 export async function deleteStoredImage(url: string): Promise<boolean> {
   const path = storagePathFromUrl(url);
   if (!path) return false;
-  if (!isSupabaseConfigured()) return false;
+  if (!isSupabaseAdminConfigured()) return false;
 
   const { error } = await getAdminSupabase().storage.from(BUCKET).remove([path]);
   if (error) throw error;
@@ -86,7 +89,7 @@ export async function deleteStoredImage(url: string): Promise<boolean> {
  * cannot act on.
  */
 export async function deleteStoredImages(urls: string[]): Promise<void> {
-  if (!isSupabaseConfigured()) return;
+  if (!isSupabaseAdminConfigured()) return;
   const paths = urls
     .map((url) => storagePathFromUrl(url))
     .filter((path): path is string => path !== null);
@@ -94,6 +97,6 @@ export async function deleteStoredImages(urls: string[]): Promise<void> {
   try {
     await getAdminSupabase().storage.from(BUCKET).remove(paths);
   } catch (cause) {
-    console.warn("[thala] cleanup orphans ignoré:", cause);
+    console.warn("[thala] cleanup orphans ignorأ©:", cause);
   }
 }
