@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "verify:images": "tsx --conditions=react-server scripts/verify-images.ts"
+    "verify:images": "tsx --conditions=react-server scripts/verify-images.ts",
+    "test:rate-limit": "tsx scripts/test-rate-limit.ts",
+    "test:e2e": "tsx scripts/test-e2e.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

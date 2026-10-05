@@ -21,9 +21,14 @@ export const SESSION_COOKIE = "thala_admin_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours
 
 /**
- * Development fallback. Deliberately only used when `ADMIN_PASSWORD` is unset,
- * and `isUsingDefaultPassword()` is surfaced in the admin UI + on the login
- * screen so this can never ship unnoticed.
+ * Development fallback, used only when `ADMIN_PASSWORD` is unset.
+ *
+ * In production this is a hard failure rather than a warning: the value is in this
+ * public repository, so a deployment that lost its `ADMIN_PASSWORD` would
+ * otherwise be guarded by a credential every visitor can read. Failing loudly is
+ * the better outcome — the fix is one variable in the Vercel dashboard, whereas
+ * quietly accepting a published password means the catalogue, the orders and the
+ * shipping rates are all one `curl` away.
  */
 const DEFAULT_PASSWORD = "thala2026";
 
@@ -125,7 +130,21 @@ export async function isAuthenticated(): Promise<boolean> {
  * comparison operate on equal-length digests regardless of the input.
  */
 export function passwordMatches(candidate: string): boolean {
+  // Compare unconditionally, then discard the result: a production deployment
+  // with no `ADMIN_PASSWORD` must fail *after* a full comparison rather than
+  // returning early on a length check, which would leak the shape of the input.
   const a = createHmac("sha256", "thala-password-compare").update(candidate).digest();
   const b = createHmac("sha256", "thala-password-compare").update(adminPassword()).digest();
-  return timingSafeEqual(a, b);
+  const matches = a.length === b.length && timingSafeEqual(a, b);
+  return matches && !isDefaultPasswordRejected();
+}
+
+/**
+ * True in production when `ADMIN_PASSWORD` is missing.
+ *
+ * Blocks login entirely rather than falling back to the repository's published
+ * password. See {@link DEFAULT_PASSWORD}.
+ */
+function isDefaultPasswordRejected(): boolean {
+  return process.env.NODE_ENV === "production" && isUsingDefaultPassword();
 }

@@ -11,8 +11,8 @@ import { prepareImage, MAX_IMAGE_BYTES } from "@/lib/images";
 import { deleteStoredImage } from "@/lib/storage";
 
 /**
- * `POST   /api/upload` â€” stores a product photo in Supabase Storage.
- * `DELETE /api/upload` â€” removes a stored photo that nothing references any more.
+ * `POST   /api/upload` — stores a product photo in Supabase Storage.
+ * `DELETE /api/upload` — removes a stored photo that nothing references any more.
  *
  * There is deliberately **no filesystem fallback**. On Vercel the server
  * filesystem is read-only and ephemeral, so `public/uploads` can never work there;
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Stockage d'images non configurأ©. Renseignez NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY et ADMIN_TOKEN, puis crأ©ez le compartiment آ« product-images آ».",
+          "Stockage d'images non configuré. Renseignez NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY et ADMIN_TOKEN, puis créez le compartiment « product-images ».",
       },
       { status: 503 },
     );
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
 
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Veuillez sأ©lectionner une image." }, { status: 400 });
+    return NextResponse.json({ error: "Veuillez sélectionner une image." }, { status: 400 });
   }
   if (file.size === 0) {
     return NextResponse.json({ error: "Fichier vide." }, { status: 400 });
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "أ‰chec du tأ©lأ©chargement de l'image. Vأ©rifiez que le compartiment آ« product-images آ» existe et que ADMIN_TOKEN est une clأ© service_role.",
+          "Échec du téléchargement de l'image. Vérifiez que le compartiment « product-images » existe et que ADMIN_TOKEN est une clé service_role.",
       },
       { status: 502 },
     );
@@ -124,7 +124,7 @@ export async function POST(request: Request) {
 }
 
 /**
- * `DELETE /api/upload` â€” removes a stored photo.
+ * `DELETE /api/upload` — removes a stored photo.
  *
  * Two refusals, both deliberate:
  *   - a URL that is not one of our own Storage objects (a repo `/images/...` asset,
@@ -145,7 +145,7 @@ export async function DELETE(request: Request) {
     const body = (await request.json()) as { url?: unknown };
     url = typeof body.url === "string" ? body.url.trim() : "";
   } catch {
-    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
   if (!url) {
@@ -164,7 +164,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json(
         {
           removed: false,
-          reason: "encore utilisأ©e",
+          reason: "encore utilisée",
           products: holders.map((p) => p.title),
         },
         { status: 409 },

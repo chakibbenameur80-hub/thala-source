@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { parseStoredShop, readRawShop, STORAGE_EVENT } from "@/lib/db/local";
 import { getShop, isLocalMode } from "@/lib/services/shop";
 import type { ShopData } from "@/lib/types";
@@ -72,9 +72,17 @@ export function useShop(initial: ShopData) {
   const [remote, setRemote] = useState<ShopData>(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(() => isLocalMode());
 
   const localMode = isLocalMode();
 
+  /**
+   * Re-reads the whole shop from `GET /api/shop`, orders included.
+   *
+   * Only ever called after a mutation, or once on mount (see below). The response
+   * is a complete snapshot, so there is nothing to merge — replacing the state is
+   * both correct and cheaper than a per-field diff.
+   */
   const refresh = useCallback(async () => {
     if (localMode) return;
     setBusy(true);
@@ -88,9 +96,47 @@ export function useShop(initial: ShopData) {
     }
   }, [localMode]);
 
+  // The server payload for an admin page cannot contain orders: those pages are
+  // rendered with the *anon* Supabase key, which has no policy allowing it to
+  // read that table (see `supabase/schema.sql`). So the first paint is always
+  // empty of orders, and `GET /api/shop` has to supply them — with the
+  // service-role key, behind the admin session cookie.
+  //
+  // This has to run on mount. Every other `refresh()` call sits inside a mutation
+  // handler, and with no orders on screen there is nothing to mutate, so without
+  // this the panel sits on "Aucune commande" forever.
+  //
+  // The `cancelled` flag handles the admin navigating away mid-request: React
+  // cannot set state on an unmounted component, and the panel that started this
+  // is gone. `busy` is deliberately not touched here — it belongs to the admin's
+  // own actions, and flashing a spinner over the whole page on mount would fight
+  // the panel's `loading` state.
+  useEffect(() => {
+    if (localMode) return;
+    let cancelled = false;
+
+    getShop().then(
+      (data) => {
+        if (cancelled) return;
+        setRemote(data);
+        setError(null);
+        setLoaded(true);
+      },
+      (cause: unknown) => {
+        if (cancelled) return;
+        setError(cause instanceof Error ? cause.message : "Chargement impossible.");
+        setLoaded(true);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localMode]);
+
   return {
     data: localMode ? local : remote,
-    loading: false,
+    loading: !localMode && !loaded,
     busy,
     error,
     refresh,

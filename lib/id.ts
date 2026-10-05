@@ -25,15 +25,41 @@ function fallbackUuid(): string {
 }
 
 const REFERENCE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // no 0/O/1/I
+const REFERENCE_LENGTH = 6;
 
 /**
  * Customer-facing order reference, e.g. `TS-7K4Q2M`.
  * Read out loud over the phone, so ambiguous characters are excluded.
+ *
+ * Drawn from `crypto.getRandomValues`, not `Math.random`: `orders.reference` has a
+ * UNIQUE constraint, so a collision fails the customer's checkout with a 503.
+ * Six characters over this 32-symbol alphabet is ~1.1e9 combinations, and the
+ * birthday collision probability is already ~0.8% at 10k orders — too much risk to
+ * hand to a non-cryptographic PRNG when the strong one is universally available.
+ *
+ * @param attempt retry number, for the caller to loop on a unique-constraint clash.
  */
-export function createOrderReference(): string {
+export function createOrderReference(attempt = 0): string {
+  const length = REFERENCE_LENGTH + Math.min(attempt, 4);
+  const alphabetLength = REFERENCE_ALPHABET.length;
+
   let tail = "";
-  for (let i = 0; i < 6; i += 1) {
-    tail += REFERENCE_ALPHABET[Math.floor(Math.random() * REFERENCE_ALPHABET.length)];
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    // Rejection sampling: 256 is not a multiple of 32, so a plain modulo would bias
+    // the first 8 symbols towards higher values.
+    const max = Math.floor(256 / alphabetLength) * alphabetLength;
+    while (tail.length < length) {
+      const buf = new Uint8Array(length - tail.length);
+      globalThis.crypto.getRandomValues(buf);
+      for (const byte of buf) {
+        if (byte >= max) continue;
+        tail += REFERENCE_ALPHABET[byte % alphabetLength];
+      }
+    }
+  } else {
+    for (let i = 0; i < length; i += 1) {
+      tail += REFERENCE_ALPHABET[Math.floor(Math.random() * alphabetLength)];
+    }
   }
   return `TS-${tail}`;
 }

@@ -7,7 +7,7 @@ import {
 } from "@/lib/db/supabase";
 import { isSupabaseAdminConfigured } from "@/lib/db/config";
 import { seedProducts } from "@/lib/seed";
-import type { Product } from "@/lib/types";
+import { validateProduct } from "@/lib/validation";
 
 /**
  * `GET  /api/products` — public catalogue (used when the client hydrates from
@@ -41,18 +41,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: adminTokenMissing() }, { status: 503 });
   }
 
-  let product: Product;
+  let body: unknown;
   try {
-    product = (await request.json()) as Product;
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
-  if (!product?.id || !product.title) {
-    return NextResponse.json({ error: "Titre et identifiant obligatoires." }, { status: 422 });
+  const parsed = validateProduct(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: "Produit invalide.", fields: parsed.errors }, { status: 422 });
   }
-  if (!Number.isFinite(product.price) || product.price <= 0) {
-    return NextResponse.json({ error: "Prix invalide." }, { status: 422 });
+  const product = parsed.value;
+
+  // `upsertProduct` is an upsert on the primary key, so posting an id that already
+  // exists would silently overwrite a live product, dropping whatever photos the
+  // admin never saw. Refusing the collision turns that into an explicit 409 the
+  // panel can report, instead of data loss.
+  if (await productExists(product.id)) {
+    return NextResponse.json(
+      { error: "Un produit porte déjà cet identifiant.", fields: { id: "Identifiant déjà utilisé." } },
+      { status: 409 },
+    );
   }
 
   try {
@@ -60,5 +70,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ product }, { status: 201 });
   } catch (error) {
     return serverError("creation produit", error);
+  }
+}
+
+/** `true` if a product with this id is already stored. */
+async function productExists(id: string): Promise<boolean> {
+  try {
+    const { products } = await new SupabaseStoreDriver().readPublic();
+    return products.some((p) => p.id === id);
+  } catch (cause) {
+    // Cannot prove the id is free, so let the write attempt decide instead of
+    // blocking the admin on a read failure.
+    console.warn("[thala] vérification d'identifiant ignorée:", cause);
+    return false;
   }
 }

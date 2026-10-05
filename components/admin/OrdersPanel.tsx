@@ -34,7 +34,7 @@ import type { Order, OrderStatus, ShopData } from "@/lib/types";
  * brief asks for is present, just stacked.
  */
 export function OrdersPanel({ initial }: { initial: ShopData }) {
-  const { data, error, refresh } = useShop(initial);
+  const { data, error, loading, refresh } = useShop(initial);
   const [filter, setFilter] = useState<OrderStatus | "all">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -118,7 +118,9 @@ export function OrdersPanel({ initial }: { initial: ShopData }) {
       ) : null}
 
       {/* ---- List ---- */}
-      {visible.length === 0 ? (
+      {loading ? (
+        <LoadingState label="Chargement des commandes" />
+      ) : visible.length === 0 ? (
         <EmptyState
           title="Aucune commande"
           body={
@@ -434,6 +436,23 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
     <div className="rounded-2xl border border-dashed border-ink-600 p-12 text-center">
       <p className="font-display text-xl font-semibold text-cream-100">{title}</p>
       <p className="mt-2 text-sm text-cream-300/60">{body}</p>
+    </div>
+  );
+}
+
+/**
+ * Shown while the first `GET /api/shop` is in flight.
+ *
+ * The server payload for this page contains no orders at all (it is rendered with
+ * the anon key, which RLS does not let read that table), so "empty" and "not yet
+ * loaded" are genuinely different states here. Without this the panel flashes
+ * "Aucune commande" on every visit before the real list arrives.
+ */
+function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-3 rounded-2xl border border-ink-600 p-12 text-sm text-cream-300/60">
+      <Spinner className="h-4 w-4" />
+      <span>{label}…</span>
     </div>
   );
 }

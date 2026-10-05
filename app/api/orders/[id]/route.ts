@@ -34,7 +34,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-    await new SupabaseStoreDriver().updateOrderStatus(id, status);
+    const updated = await new SupabaseStoreDriver().updateOrderStatus(id, status);
+    if (!updated) {
+      return NextResponse.json({ error: "Commande introuvable." }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   } catch (error) {
     return serverError("maj statut commande", error);
@@ -47,7 +50,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-    await new SupabaseStoreDriver().deleteOrder(id);
+    const deleted = await new SupabaseStoreDriver().deleteOrder(id);
+    if (!deleted) {
+      return NextResponse.json({ error: "Commande introuvable." }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   } catch (error) {
     return serverError("suppression commande", error);

@@ -85,6 +85,19 @@ export async function POST(request: Request) {
 
   attempts.delete(key);
 
+  // Belt and braces. `passwordMatches` already refuses the published default
+  // password in production, so reaching this means `ADMIN_PASSWORD` is somehow
+  // set — surfacing it keeps the owner's warning banner honest.
+  if (isUsingDefaultPassword()) {
+    console.error(
+      "[thala] ADMIN_PASSWORD est absent : connexion admin désactivée en production.",
+    );
+    return NextResponse.json(
+      { error: "ADMIN_PASSWORD doit être défini dans les variables d'environnement Vercel." },
+      { status: 503 },
+    );
+  }
+
   const response = NextResponse.json({
     ok: true,
     // Surfaced so the login screen can warn the owner that the default password

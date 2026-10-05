@@ -15,7 +15,7 @@ import type { ShopData } from "@/lib/types";
  * comment: if any client component ever imports this module, `next build` fails
  * with "This module cannot be imported from a Client Component module". That is
  * deliberate. This file reads `ADMIN_TOKEN`, the project's **service-role** key,
- * and a service-role key in the browser is a full bypass of Row Level Security â€”
+ * and a service-role key in the browser is a full bypass of Row Level Security —
  * anyone could rewrite the catalogue or read every customer's order.
  *
  * The browser reaches the database only through Route Handlers, which check the
@@ -49,7 +49,22 @@ const SHIPPING_TABLE = "shipping_rates";
 export function adminTokenMissing(): string {
   return isSupabaseAdminConfigured()
     ? ""
-    : "ADMIN_TOKEN (clأ© service_role) est manquant. Ajoutez-le dans les variables d'environnement Vercel, puis redأ©ployez.";
+    : "ADMIN_TOKEN (clé service_role) est manquant. Ajoutez-le dans les variables d'environnement Vercel, puis redéployez.";
+}
+
+/**
+ * Raised when an insert loses a UNIQUE race, so the caller can retry with a
+ * different value instead of reporting a failure to the customer.
+ *
+ * PostgREST/Postgres reports a unique violation as SQLSTATE `23505` regardless of
+ * which column clashed. `insertOrder` only races on `reference` (`id` comes from
+ * `crypto.randomUUID`), so treating 23505 as "reference taken" is accurate here.
+ */
+export class ReferenceCollisionError extends Error {
+  constructor() {
+    super("Référence de commande déjà utilisée.");
+    this.name = "ReferenceCollisionError";
+  }
 }
 
 let cachedAnon: SupabaseClient | null = null;
@@ -67,7 +82,7 @@ export function getSupabase(): SupabaseClient {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error(
-      "Supabase n'est pas configurأ©. Renseignez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      "Supabase n'est pas configuré. Renseignez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.",
     );
   }
   cachedAnon = createClient(url, key, {
@@ -103,7 +118,7 @@ export class SupabaseStoreDriver implements StoreDriver {
    * Public read: catalogue + shipping rates, no orders.
    *
    * Uses the anon client, so it works on the storefront without any secret
-   * being involved. Deliberately does **not** read `orders` â€” the anon key cannot,
+   * being involved. Deliberately does **not** read `orders` — the anon key cannot,
    * and asking for it would make every public request fail.
    */
   async readPublic(): Promise<ShopData> {
@@ -122,7 +137,7 @@ export class SupabaseStoreDriver implements StoreDriver {
     ] as const) {
       if (result.error) {
         throw new Error(
-          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exأ©cutأ© supabase/schema.sql ?`,
+          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exécuté supabase/schema.sql ?`,
         );
       }
     }
@@ -136,7 +151,7 @@ export class SupabaseStoreDriver implements StoreDriver {
   }
 
   /**
-   * Full read, including orders â€” admin only.
+   * Full read, including orders — admin only.
    *
    * Uses the service-role client because RLS grants order reads to nothing but
    * `service_role`. Callers must be behind the admin session check; see
@@ -158,7 +173,7 @@ export class SupabaseStoreDriver implements StoreDriver {
     ] as const) {
       if (result.error) {
         throw new Error(
-          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exأ©cutأ© supabase/schema.sql ?`,
+          `Lecture Supabase impossible (${name}): ${result.error.message}. Avez-vous exécuté supabase/schema.sql ?`,
         );
       }
     }
@@ -170,58 +185,42 @@ export class SupabaseStoreDriver implements StoreDriver {
     });
   }
 
-  /**
-   * Full-state write.
-   *
-   * Used by the admin for "apply everything" style operations. Because PostgREST
-   * has no multi-statement transaction, each table is written in its own batch;
-   * a partial failure is reported instead of being hidden.
-   */
-  async write(next: ShopData): Promise<void> {
-    const supabase = getAdminSupabase();
-
-    const shippingRows = next.shipping.map((rate) => ({
-      wilaya_code: rate.wilayaCode,
-      home: rate.home,
-      office: rate.office,
-    }));
-
-    const productUpsert = supabase.from(PRODUCTS_TABLE).upsert(
-      next.products.map(productToRow),
-      { onConflict: "id" },
-    );
-    const shippingUpsert = supabase.from(SHIPPING_TABLE).upsert(shippingRows, {
-      onConflict: "wilaya_code",
-    });
-    const ids = next.products.map((p) => p.id);
-    const productDelete = supabase
-      .from(PRODUCTS_TABLE)
-      .delete()
-      .not("id", "in", `(${ids.length ? ids.join(",") : '""'})`);
-
-    const results = await Promise.all([productUpsert, shippingUpsert, productDelete]);
-    const failed = results.find((r) => r.error);
-    if (failed?.error) {
-      throw new Error(`أ‰criture Supabase impossible : ${failed.error.message}`);
-    }
-  }
-
   async insertOrder(order: ShopData["orders"][number]): Promise<void> {
     const supabase = getAdminSupabase();
     const { error } = await supabase.from(ORDERS_TABLE).insert(orderToRow(order));
-    if (error) throw new Error(`Commande non enregistrأ©e : ${error.message}`);
+    if (error) {
+      // `orders.reference` is UNIQUE. A clash is not a real failure — it just means
+      // this customer drew a reference another order already owns, so the caller
+      // is told to draw again with a fresh reference instead of showing a 503.
+      if (error.code === "23505") throw new ReferenceCollisionError();
+      throw new Error(`Commande non enregistrée : ${error.message}`);
+    }
   }
 
-  async updateOrderStatus(id: string, status: string): Promise<void> {
+  async updateOrderStatus(id: string, status: string): Promise<boolean> {
     const supabase = getAdminSupabase();
-    const { error } = await supabase.from(ORDERS_TABLE).update({ status }).eq("id", id);
-    if (error) throw new Error(`Mise أ  jour impossible : ${error.message}`);
+    // `.select("id")` is what makes the affected-row count observable. PostgREST
+    // answers an update that matched nothing with `{ data: null, error: null }`, so
+    // checking only `error` reports success for an id that does not exist, and the
+    // dashboard cannot tell a real change from a typo.
+    const { data, error } = await supabase
+      .from(ORDERS_TABLE)
+      .update({ status })
+      .eq("id", id)
+      .select("id");
+    if (error) throw new Error(`Mise à jour impossible : ${error.message}`);
+    return (data ?? []).length > 0;
   }
 
-  async deleteOrder(id: string): Promise<void> {
+  async deleteOrder(id: string): Promise<boolean> {
     const supabase = getAdminSupabase();
-    const { error } = await supabase.from(ORDERS_TABLE).delete().eq("id", id);
+    const { data, error } = await supabase
+      .from(ORDERS_TABLE)
+      .delete()
+      .eq("id", id)
+      .select("id");
     if (error) throw new Error(`Suppression impossible : ${error.message}`);
+    return (data ?? []).length > 0;
   }
 
   async upsertProduct(product: ShopData["products"][number]): Promise<void> {
@@ -232,10 +231,23 @@ export class SupabaseStoreDriver implements StoreDriver {
     if (error) throw new Error(`Enregistrement du produit impossible : ${error.message}`);
   }
 
-  async deleteProduct(id: string): Promise<void> {
+  /**
+   * Deletes a product. Returns `false` if no product has that id.
+   *
+   * The trailing `.select("id")` is what makes that answerable: PostgREST returns
+   * the affected rows instead of `null`, which is the only difference between
+   * "deleted" and "there was nothing to delete". Same reasoning as
+   * {@link updateOrderStatus}.
+   */
+  async deleteProduct(id: string): Promise<boolean> {
     const supabase = getAdminSupabase();
-    const { error } = await supabase.from(PRODUCTS_TABLE).delete().eq("id", id);
+    const { data, error } = await supabase
+      .from(PRODUCTS_TABLE)
+      .delete()
+      .eq("id", id)
+      .select("id");
     if (error) throw new Error(`Suppression du produit impossible : ${error.message}`);
+    return (data ?? []).length > 0;
   }
 
   async putShipping(rates: ShopData["shipping"]): Promise<void> {

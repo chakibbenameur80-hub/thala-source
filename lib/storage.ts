@@ -18,8 +18,8 @@ const BUCKET = "product-images";
  *
  * Every URL produced by `/api/upload` starts with exactly this string, which is
  * what makes it safe to delete: we only ever remove objects we created. Anything
- * else â€” a `/images/robe.jpg` that ships with the repo, or a URL on someone
- * else's host â€” is recognised as foreign and left alone.
+ * else — a `/images/robe.jpg` that ships with the repo, or a URL on someone
+ * else's host — is recognised as foreign and left alone.
  */
 export function storageUrlPrefix(): string | null {
   const url = supabaseUrl();
@@ -97,6 +97,6 @@ export async function deleteStoredImages(urls: string[]): Promise<void> {
   try {
     await getAdminSupabase().storage.from(BUCKET).remove(paths);
   } catch (cause) {
-    console.warn("[thala] cleanup orphans ignorأ©:", cause);
+    console.warn("[thala] cleanup orphans ignoré:", cause);
   }
 }

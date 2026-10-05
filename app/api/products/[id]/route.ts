@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/supabase";
 import { isSupabaseAdminConfigured } from "@/lib/db/config";
 import { deleteStoredImages } from "@/lib/storage";
+import { validateProduct } from "@/lib/validation";
 import type { Product } from "@/lib/types";
 
 /**
@@ -29,28 +30,45 @@ export async function PUT(request: Request, context: RouteContext) {
     return NextResponse.json({ error: adminTokenMissing() }, { status: 503 });
   }
 
-  let product: Product;
+  let body: unknown;
   try {
-    product = (await request.json()) as Product;
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
+  let id: string;
   try {
-    const { id } = await context.params;
+    ({ id } = await context.params);
+  } catch {
+    return NextResponse.json({ error: "Identifiant manquant." }, { status: 400 });
+  }
+
+  try {
     const driver = new SupabaseStoreDriver();
 
-    // Capture the photos this product had *before* the edit, so the ones the edit
-    // dropped can be cleaned up afterwards. Reading first means a failure here
-    // leaves the images alone rather than orphaning them silently.
-    const previous = await currentImages(driver, id);
+    // Read the product as it stands *before* the edit. This serves three purposes:
+    // it decides whether the row exists (a PUT to an unknown id must 404, not
+    // silently create), it preserves `createdAt` so an edit cannot backdate a
+    // product, and it captures the current photos so the ones this edit drops can
+    // be cleaned up afterwards.
+    const existing = await findProduct(driver, id);
+    if (!existing) {
+      return NextResponse.json({ error: "Produit introuvable." }, { status: 404 });
+    }
 
+    const parsed = validateProduct(body, { keep: { createdAt: existing.createdAt } });
+    if (!parsed.ok) {
+      return NextResponse.json({ error: "Produit invalide.", fields: parsed.errors }, { status: 422 });
+    }
     // The URL is authoritative for the id: never let the body rename a record.
-    await driver.upsertProduct({ ...product, id });
+    const product = { ...parsed.value, id };
 
-    await purgeUnreferencedImages(driver, previous, product.images ?? []);
+    await driver.upsertProduct(product);
 
-    return NextResponse.json({ ok: true, id });
+    await purgeUnreferencedImages(driver, existing.images, product.images);
+
+    return NextResponse.json({ ok: true, product });
   } catch (error) {
     return serverError("maj produit", error);
   }
@@ -79,15 +97,23 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const { id } = await context.params;
     const driver = new SupabaseStoreDriver();
 
-    // Read the doomed product's images before deleting the row.
-    const images = await currentImages(driver, id);
+    // Read the doomed product before deleting the row, for its photos.
+    const existing = await findProduct(driver, id);
+    if (!existing) {
+      return NextResponse.json({ error: "Produit introuvable." }, { status: 404 });
+    }
 
-    await driver.deleteProduct(id);
+    const deleted = await driver.deleteProduct(id);
+    if (!deleted) {
+      // Lost a race with a concurrent delete. Its images are someone else's
+      // problem now, not ours to purge.
+      return NextResponse.json({ error: "Produit introuvable." }, { status: 404 });
+    }
 
     // Recompute which images are still referenced by a surviving product. The
     // deleted product's own id is passed as excluded so its row — already gone —
     // cannot be the thing keeping an image alive.
-    await purgeUnreferencedImages(driver, images, [], id);
+    await purgeUnreferencedImages(driver, existing.images, [], id);
 
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -99,16 +125,22 @@ export async function DELETE(_request: Request, context: RouteContext) {
  * Helpers
  * ------------------------------------------------------------------ */
 
-/** The product's current photos, or `[]` if it does not exist / cannot be read. */
-async function currentImages(driver: SupabaseStoreDriver, id: string): Promise<string[]> {
-  try {
-    const { products } = await driver.readPublic();
-    return products.find((p) => p.id === id)?.images ?? [];
-  } catch (cause) {
-    // Losing the images is acceptable; failing the write is not.
-    console.warn("[thala] lecture des photos ignorée:", cause);
-    return [];
-  }
+/**
+ * The product as currently stored, or `null` if no such id exists.
+ *
+ * `readPublic` is the anon client, which is enough: the catalogue is public by
+ * design, and the admin reading its own catalogue back does not need the
+ * service-role key. A read failure is reported as "not found" rather than
+ * swallowed, because acting on a wrong answer here is worse than a 404 — an
+ * unknown `createdAt` would reset the timestamp, and a wrong photo list would
+ * delete an image that is still on a product.
+ */
+async function findProduct(
+  driver: SupabaseStoreDriver,
+  id: string,
+): Promise<Product | null> {
+  const { products } = await driver.readPublic();
+  return products.find((p) => p.id === id) ?? null;
 }
 
 /**

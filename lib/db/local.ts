@@ -41,10 +41,6 @@ export class LocalStoreDriver implements StoreDriver {
     }
   }
 
-  async write(next: ShopData): Promise<void> {
-    this.writeSync(next);
-  }
-
   writeSync(next: ShopData): void {
     if (typeof window === "undefined") return;
     try {

@@ -10,7 +10,7 @@ import { normalizeShopData } from "@/lib/db/schema";
 import type { Product } from "@/lib/types";
 
 /**
- * `POST /api/products/import` â€” move a `localStorage` catalogue into Postgres.
+ * `POST /api/products/import` — move a `localStorage` catalogue into Postgres.
  *
  * ## Why this route is needed
  *
@@ -51,19 +51,19 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as { products?: unknown };
   } catch {
-    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
   if (!Array.isArray(body.products)) {
     return NextResponse.json(
-      { error: "Aucun produit أ  importer. Exportez d'abord les donnأ©es du navigateur." },
+      { error: "Aucun produit à importer. Exportez d'abord les données du navigateur." },
       { status: 422 },
     );
   }
 
   if (body.products.length > MAX_IMPORT) {
     return NextResponse.json(
-      { error: `Import limitأ© أ  ${MAX_IMPORT} produits par envoi.` },
+      { error: `Import limité à ${MAX_IMPORT} produits par envoi.` },
       { status: 413 },
     );
   }

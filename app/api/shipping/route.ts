@@ -4,7 +4,7 @@ import { isSupabaseConfigured, SupabaseStoreDriver } from "@/lib/db/supabase";
 import { defaultShippingRates } from "@/lib/shipping";
 import type { ShippingRate } from "@/lib/types";
 
-/** `GET /api/shipping` â€” public: wilaya rates. */
+/** `GET /api/shipping` — public: wilaya rates. */
 export const dynamic = "force-dynamic";
 
 export async function GET() {
@@ -22,7 +22,7 @@ export async function GET() {
   }
 }
 
-/** `PUT /api/shipping` â€” admin: replace rates. */
+/** `PUT /api/shipping` — admin: replace rates. */
 export async function PUT(request: Request) {
   const denied = await denyUnauthenticated() ?? denyIfLocalMode();
   if (denied) return denied;
@@ -31,7 +31,7 @@ export async function PUT(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Requأھte invalide." }, { status: 400 });
+    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
   }
 
   const rates = Array.isArray(body) ? body : (body as { rates?: unknown })?.rates;

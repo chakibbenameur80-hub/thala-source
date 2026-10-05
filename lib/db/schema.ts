@@ -9,11 +9,17 @@ import type { Order, OrderItem, Product, ShippingRate, ShopData } from "@/lib/ty
  * through this interface (see `lib/db/index.ts`). That is what makes the
  * "works offline with zero config" prototype and the "real database" deployment
  * share 100% of the same UI code.
+ *
+ * Read-only on purpose: there is deliberately no "write the whole shop" method.
+ * A blanket replace would have to upsert every row *and* delete every id absent
+ * from the payload, which turns one bad id into a silent wipe and needs a
+ * hand-built `not in (...)` filter. Admin changes go through the targeted
+ * routes instead (`POST`/`PUT`/`DELETE` on products, orders and shipping), each
+ * of which validates a single record and reports precisely what it did.
  */
 export interface StoreDriver {
   readonly mode: "local" | "supabase";
   read(): Promise<ShopData>;
-  write(next: ShopData): Promise<void>;
 }
 
 /** A brand-new, unpersisted shop state. */
