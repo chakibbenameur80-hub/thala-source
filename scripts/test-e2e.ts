@@ -34,7 +34,13 @@ function check(label: string, ok: boolean, detail = ""): void {
   }
 }
 
-type ReqInit = { method?: string; body?: string | null; headers?: Record<string, string> };
+type ReqInit = {
+  method?: string;
+  body?: string | null;
+  headers?: Record<string, string>;
+  /** Set false to omit the admin cookie, i.e. probe as a genuine anonymous visitor. */
+  auth?: boolean;
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -55,7 +61,7 @@ type ProbeResponse = {
 async function req(path: string, init: ReqInit = {}): Promise<ProbeResponse> {
   const headers: Record<string, string> = { ...(init.headers ?? {}) };
   if (init.body) headers["content-type"] = "application/json";
-  if (COOKIE) headers.cookie = COOKIE;
+  if (COOKIE && init.auth !== false) headers.cookie = COOKIE;
   const res = await fetch(`${BASE}${path}`, { ...init, headers, redirect: "manual" });
   const text = await res.text();
   let json: Record<string, unknown> | undefined;
@@ -137,18 +143,53 @@ async function upload(buffer: Buffer, filename = "probe.jpg", type = "image/jpeg
  * instance keeps a separate count, so a single client can draw a 429 from one
  * instance while another has room. Pacing cannot predict which instance answers.
  *
- * Retrying on 429 with backoff can. The limiter does its job either way; this only
- * keeps a 429 from standing in for the validation result under test.
+ * The wait therefore follows the route's own `Retry-After` rather than a guessed
+ * delay. The limiter does its job either way; this only keeps a 429 from standing
+ * in for the validation result under test. A `Retry-After` is rounded up with a
+ * second of slack, since the limiter counts the attempt that drew the 429 too.
  */
 let throttled = 0;
+
+function retryAfterMs(res: ProbeResponse): number {
+  const header = res.headers?.get("retry-after");
+  const seconds = header ? Number(header) : NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) return (seconds + 1) * 1000;
+  return 20_000;
+}
 
 async function postOrder(path: string, init: ReqInit = {}): Promise<ProbeResponse> {
   for (let attempt = 0; ; attempt += 1) {
     const res = await req(path, { ...init, method: "POST" });
-    if (res.status !== 429 || attempt >= 2) return res;
+    if (res.status !== 429 || attempt >= 3) return res;
     throttled += 1;
-    await sleep(20_000 * (attempt + 1));
+    await sleep(retryAfterMs(res));
   }
+}
+
+/**
+ * Asks Supabase Storage whether an object still exists.
+ *
+ * Two traps make a naive `fetch(url).status` useless for this, and both produced
+ * false results against the live project:
+ *
+ *   - The public object endpoint sits behind a CDN that keeps serving an image
+ *     after it has been deleted, so a deleted object still answers `200`.
+ *   - A genuinely missing object answers `400`, while a cached miss can answer
+ *     `404` with a `NoSuchKey` body. Neither status alone identifies the object.
+ *
+ * So: a unique query string forces an origin lookup rather than a cache hit, and
+ * the body is inspected as well as the status.
+ */
+async function storageServes(url: string): Promise<boolean> {
+  const sep = url.includes("?") ? "&" : "?";
+  const res = await fetch(`${url}${sep}cb=${Math.random().toString(36).slice(2)}`, {
+    headers: { "cache-control": "no-cache" },
+  });
+  const body = await res.text();
+  if (res.status === 200) return true;
+  // A non-200 that still describes the object is treated as served, so an
+  // unexpected error shape fails loudly instead of passing as "purged".
+  return !/NoSuchKey|not_found|Object not found/i.test(body);
 }
 
 async function main() {
@@ -163,7 +204,7 @@ async function main() {
     check(`GET ${p} -> 200`, r.status === 200, `got ${r.status}`);
   }
 
-  const adminPage = await req("/admin/products");
+  const adminPage = await req("/admin/products", { auth: false });
   check(
     "GET /admin/products redirects anonymous visitor",
     adminPage.status === 307 || adminPage.status === 302 || adminPage.status === 401,
@@ -189,7 +230,7 @@ async function main() {
     ["POST", "/api/products/import", '{"products":[]}'],
   ];
   for (const [method, path, body] of anonMutations) {
-    const r = await req(path, { method, body });
+    const r = await req(path, { method, body, auth: false });
     check(
       `anon ${method} ${path} -> 401`,
       r.status === 401 || r.status === 403,
@@ -197,12 +238,13 @@ async function main() {
     );
   }
 
-  const anonReads = await req("/api/shop");
+  const anonReads = await req("/api/shop", { auth: false });
   check("anon GET /api/shop -> 401", anonReads.status === 401, `got ${anonReads.status}`);
 
   const anonOrderPatch = await req("/api/orders/probe", {
     method: "PATCH",
     body: '{"status":"delivered"}',
+    auth: false,
   });
   check(
     "anon PATCH /api/orders/[id] -> 401",
@@ -210,7 +252,7 @@ async function main() {
     `got ${anonOrderPatch.status}`,
   );
 
-  const anonOrderDelete = await req("/api/orders/probe", { method: "DELETE" });
+  const anonOrderDelete = await req("/api/orders/probe", { method: "DELETE", auth: false });
   check(
     "anon DELETE /api/orders/[id] -> 401",
     anonOrderDelete.status === 401 || anonOrderDelete.status === 403,
@@ -303,7 +345,11 @@ async function main() {
 
   /* ---------------- authenticated CRUD ---------------- */
 
-  const missing = ["E2E_COOKIE", "E2E_SUPABASE_URL", "E2E_SERVICE_KEY"].filter((k) => !process.env[k]);
+  // Only the cookie is genuinely required. Everything the suite asserts on runs
+  // through the app's own endpoints, which hold the service-role key server-side;
+  // nothing here needs it locally. `E2E_SERVICE_KEY` is optional and only enables
+  // the extra "did we leave objects in the bucket" sweep at the end.
+  const missing = ["E2E_COOKIE", "E2E_SUPABASE_URL"].filter((k) => !process.env[k]);
   if (missing.length > 0) {
     console.log(`\nFull run needs: ${missing.join(", ")} — stopping after the public checks.`);
     console.log(`\n${pass} passed, ${fail} failed`);
@@ -324,13 +370,17 @@ async function main() {
     const img = await sampleImage();
 
     const up = await upload(img);
-    check("upload -> 200", up.status === 200, `got ${up.status} ${up.json?.error ?? ""}`);
+    // 201 is correct here: the upload created a new object.
+  check("upload -> 201", up.status === 201, `got ${up.status} ${up.json?.error ?? ""}`);
     const url = up.json?.url;
     check("upload returns a public URL", typeof url === "string" && url.startsWith("http"), url ?? "");
     created.push({ kind: "image", url });
 
     if (url) {
-      const head = await fetch(url, { method: "GET" });
+      const head = await fetch(`${url}${url.includes("?") ? "&" : "?"}cb=${Math.random().toString(36).slice(2)}`, {
+        method: "GET",
+        headers: { "cache-control": "no-cache" },
+      });
       check("uploaded image is publicly reachable -> 200", head.status === 200, `got ${head.status}`);
       check(
         "stored object is WebP",
@@ -384,7 +434,7 @@ async function main() {
 
     /* --- update --- */
     const second = await upload(await sampleImage(), "second.jpg");
-    check("second upload -> 200", second.status === 200, `got ${second.status}`);
+    check("second upload -> 201", second.status === 201, `got ${second.status}`);
     created.push({ kind: "image", url: second.json?.url });
 
     const update = await req(`/api/products/${id}`, {
@@ -418,8 +468,8 @@ async function main() {
 
     if (url) {
       // The replaced image should have been purged from Storage.
-      const gone = await fetch(url, { method: "GET" });
-      check("replaced image purged from Storage", gone.status === 404, `got ${gone.status}`);
+      const stillServed = await storageServes(url);
+      check("replaced image purged from Storage", !stillServed, `still served: ${stillServed}`);
     }
 
     const missingUpdate = await req("/api/products/does-not-exist", {
@@ -486,9 +536,18 @@ async function main() {
       const postgrest = `${sbUrl}/rest/v1`;
       const keyHeaders = { apikey: anonKey, authorization: `Bearer ${anonKey}` };
 
+      /*
+       * Status codes alone do not prove RLS here. PostgREST answers a DELETE or
+       * UPDATE that RLS filtered out with `204 No Content` and zero rows, which
+       * looks exactly like success. So each probe asks for the affected rows back
+       * (`Prefer: return=representation`) and asserts on those, then re-reads to
+       * confirm the data really is untouched.
+       */
+      const returning = { ...keyHeaders, "content-type": "application/json", prefer: "return=representation" };
+
       const anonInsert = await fetch(`${postgrest}/orders`, {
         method: "POST",
-        headers: { ...keyHeaders, "content-type": "application/json", prefer: "return=representation" },
+        headers: { ...returning },
         body: JSON.stringify({
           id: "rls_probe",
           reference: "TS-RLSPROBE",
@@ -505,13 +564,14 @@ async function main() {
           total: 1,
         }),
       });
+      const insertRows = anonInsert.status === 200 ? await anonInsert.json() : [];
       check(
         "RLS: anon key cannot INSERT an order",
-        anonInsert.status === 401 || anonInsert.status === 403 || anonInsert.status >= 400,
-        `got ${anonInsert.status}`,
+        anonInsert.status >= 400 && (!Array.isArray(insertRows) || insertRows.length === 0),
+        `status ${anonInsert.status}, rows ${Array.isArray(insertRows) ? insertRows.length : "n/a"}`,
       );
 
-      const anonRead = await fetch(`${postgrest}/orders?select=id&limit=1`, { headers: keyHeaders });
+      const anonRead = await fetch(`${postgrest}/orders?select=id&limit=5`, { headers: keyHeaders });
       const anonRows = anonRead.status === 200 ? await anonRead.json() : null;
       check(
         "RLS: anon key cannot read orders",
@@ -519,25 +579,55 @@ async function main() {
         `status ${anonRead.status}, rows ${Array.isArray(anonRows) ? anonRows.length : "n/a"}`,
       );
 
-      const anonWriteProduct = await fetch(`${postgrest}/products`, {
+      const anonWriteProduct = await fetch(`${postgrest}/products?id=eq.${id}`, {
         method: "PATCH",
-        headers: { ...keyHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ title: "hijacked" }),
+        headers: { ...returning },
+        body: JSON.stringify({ title: "hijacked", price: 1 }),
       });
+      const updateRows = anonWriteProduct.status === 200 ? await anonWriteProduct.json() : [];
       check(
         "RLS: anon key cannot UPDATE products",
-        anonWriteProduct.status >= 400,
-        `got ${anonWriteProduct.status}`,
+        !Array.isArray(updateRows) || updateRows.length === 0,
+        `status ${anonWriteProduct.status}, rows ${Array.isArray(updateRows) ? updateRows.length : "n/a"}`,
       );
 
       const anonDeleteProduct = await fetch(`${postgrest}/products?id=eq.${id}`, {
         method: "DELETE",
-        headers: keyHeaders,
+        headers: { ...returning },
       });
+      const deleteRows = anonDeleteProduct.status === 200 ? await anonDeleteProduct.json() : [];
       check(
         "RLS: anon key cannot DELETE products",
-        anonDeleteProduct.status >= 400,
-        `got ${anonDeleteProduct.status}`,
+        !Array.isArray(deleteRows) || deleteRows.length === 0,
+        `status ${anonDeleteProduct.status}, rows ${Array.isArray(deleteRows) ? deleteRows.length : "n/a"}`,
+      );
+
+      // The decisive one: the row must still be there, unaltered.
+      const survivor = await fetch(`${postgrest}/products?id=eq.${id}&select=id,title,price`, {
+        headers: keyHeaders,
+      });
+      const survivorRows = survivor.status === 200 ? await survivor.json() : [];
+      check(
+        "RLS: the product survived the anon write attempts unchanged",
+        Array.isArray(survivorRows) &&
+          survivorRows.length === 1 &&
+          survivorRows[0].title === "E2E Probe Renamed" &&
+          survivorRows[0].price === 999,
+        Array.isArray(survivorRows) && survivorRows.length === 1
+          ? `title "${survivorRows[0].title}" price ${survivorRows[0].price}`
+          : `${survivorRows.length} row(s) found`,
+      );
+
+      const anonWriteShipping = await fetch(`${postgrest}/shipping_rates?wilaya_code=eq.16`, {
+        method: "PATCH",
+        headers: { ...returning },
+        body: JSON.stringify({ home: 1 }),
+      });
+      const shippingRows = anonWriteShipping.status === 200 ? await anonWriteShipping.json() : [];
+      check(
+        "RLS: anon key cannot UPDATE shipping_rates",
+        !Array.isArray(shippingRows) || shippingRows.length === 0,
+        `status ${anonWriteShipping.status}, rows ${Array.isArray(shippingRows) ? shippingRows.length : "n/a"}`,
       );
     } else {
       console.log("note: set E2E_ANON_KEY to also exercise the RLS policies directly");
@@ -556,8 +646,8 @@ async function main() {
     );
 
     if (second.json?.url) {
-      const stillThere = await fetch(second.json.url, { method: "GET" });
-      check("deleted product's image purged from Storage", stillThere.status === 404, `got ${stillThere.status}`);
+      const stillServed = await storageServes(second.json.url);
+      check("deleted product's image purged from Storage", !stillServed, `still served: ${stillServed}`);
     }
 
     const missingDelete = await req("/api/products/no-such-product", { method: "DELETE" });
@@ -592,7 +682,9 @@ async function main() {
       try {
         if (item.kind === "product") {
           const r = await req(`/api/products/${item.id}`, { method: "DELETE" });
-          console.log(`  product ${item.id} -> ${r.status}`);
+          // The test already deleted this product on purpose; a second 404 just
+          // confirms the row is gone rather than signalling a cleanup problem.
+          console.log(`  product ${item.id} -> ${r.status}${r.status === 404 ? " (already deleted)" : ""}`);
         } else if (item.kind === "order") {
           const r = await req(`/api/orders/${item.id}`, { method: "DELETE" });
           console.log(`  order ${item.id} -> ${r.status}`);
