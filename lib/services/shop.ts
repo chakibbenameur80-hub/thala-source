@@ -35,9 +35,7 @@ export function isLocalMode(): boolean {
 /**
  * Full shop state from whichever backend is live.
  *
- * `GET /api/shop` requires the admin session cookie, which is why this is
- * admin-only: the storefront never calls it, it hydrates from the server-rendered
- * payload instead (see `StoreApp`).
+ * `GET /api/shop` requires the admin session cookie, so this is admin-only.
  */
 export async function getShop(): Promise<ShopData> {
   if (IS_SUPABASE) {
@@ -49,6 +47,45 @@ export async function getShop(): Promise<ShopData> {
     return (await response.json()) as ShopData;
   }
   return local.read();
+}
+
+/**
+ * The storefront's read: the public catalogue and delivery rates, no session.
+ *
+ * Built from the two endpoints the anon key is allowed to read —
+ * `GET /api/products` and `GET /api/shipping` — rather than `GET /api/shop`,
+ * which is admin-only because it includes orders. `orders` is therefore always
+ * empty here: a customer has no business reading the order table, and the schema
+ * grants `anon` no policy on it.
+ *
+ * This is what removes the storefront's dependency on `localStorage` as a source
+ * of products. In local mode there is no server-side catalogue to read, so the
+ * browser's own store stays the only copy — see {@link isLocalMode}.
+ */
+export async function getPublicShop(): Promise<ShopData> {
+  if (!IS_SUPABASE) return local.read();
+
+  // Both halves are needed: the catalogue drives the grid, the rates drive the
+  // delivery price quoted in the checkout dialog.
+  const [productsResponse, shippingResponse] = await Promise.all([
+    fetch("/api/products", { cache: "no-store" }),
+    fetch("/api/shipping", { cache: "no-store" }),
+  ]);
+
+  if (!productsResponse.ok) {
+    throw new Error("Catalogue indisponible.");
+  }
+
+  const productsBody = (await productsResponse.json()) as { products?: Product[] };
+  const shippingBody = shippingResponse.ok
+    ? ((await shippingResponse.json()) as { shipping?: ShippingRate[] })
+    : {};
+
+  return {
+    products: productsBody.products ?? [],
+    orders: [],
+    shipping: shippingBody.shipping ?? [],
+  };
 }
 
 /* ------------------------------------------------------------------ *

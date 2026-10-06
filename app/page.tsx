@@ -12,6 +12,24 @@ import { BRAND, CONTACT } from "@/lib/brand";
  * interactive parts (filters, dialog, checkout) live in `<StoreApp>`.
  */
 
+/**
+ * Render on every request instead of at build time.
+ *
+ * Without this, `/` is prerendered as a static page and the catalogue is frozen
+ * into the HTML at deploy time. A product created in the admin afterwards was
+ * written to Postgres correctly and read back correctly through
+ * `GET /api/products`, yet never reached a customer: every visitor kept getting
+ * the snapshot from the last build until the app was redeployed. The admin
+ * dashboard did not have this problem because it is already dynamic and refetches
+ * `/api/shop` after each mutation.
+ *
+ * The read is a handful of rows, so paying for it per request is the right trade
+ * for a shop whose whole point is that the owner can add a dress and it is on
+ * sale immediately. Do not reintroduce a static or long-revalidate page here
+ * without changing that requirement.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: `${BRAND.name} — ${BRAND.taglineFr}`,
   description: BRAND.descriptionFr,
@@ -19,9 +37,10 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
-  // With Supabase configured this hits the real database; otherwise it returns
-  // the seed catalogue. Either way the browser hydrates from its own store, so
-  // admin changes appear without a redeploy.
+  // Server-rendered from Supabase on every request (see `dynamic` above). The
+  // browser then revalidates against the public API, so a product added while the
+  // tab was open shows up without a reload — and no `localStorage` is involved
+  // once Supabase is configured.
   const data = await loadStorefrontData();
 
   // Structured data helps Google show the product rich results. Prices are in

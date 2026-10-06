@@ -21,7 +21,8 @@ import type { ShopData } from "@/lib/types";
  *
  * Pages render on the server first (good for SEO and for a fast first paint on a
  * 3G connection), then the client takes over:
- *   - with Supabase, this is the real catalogue read through the anon key;
+ *   - with Supabase, this is the real catalogue read through the anon key, on
+ *     every request for the storefront — see `dynamic` in `app/page.tsx`;
  *   - without it, `emptyShopData()` is the seed catalogue, and the client swaps to
  *     its own `localStorage` — the only place that copy exists.
  *

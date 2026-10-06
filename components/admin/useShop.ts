@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { parseStoredShop, readRawShop, STORAGE_EVENT } from "@/lib/db/local";
-import { getShop, isLocalMode } from "@/lib/services/shop";
+import { getPublicShop, getShop, isLocalMode } from "@/lib/services/shop";
 import type { ShopData } from "@/lib/types";
 
 /**
@@ -56,6 +56,63 @@ export function useLocalShop(initial: ShopData): ShopData {
   const raw = useSyncExternalStore(subscribe, readRawShop, () => "");
 
   return useMemo(() => parseStoredShop(raw) ?? initial, [raw, initial]);
+}
+
+/**
+ * The storefront's catalogue.
+ *
+ * This is deliberately *not* `useLocalShop`. That hook treats `localStorage` as
+ * the source of truth, which is right for a browser-only shop but wrong once
+ * Supabase is configured: the database is the single source of truth for both the
+ * admin panels and the storefront, and a customer's browser has no catalogue in it
+ * to read. The storefront used to hydrate from `initial` alone, and `initial` came
+ * from a statically prerendered page, so a product added in the admin was written
+ * to Postgres and never rendered for anyone until the app was redeployed.
+ *
+ * So the storefront starts from the server-rendered payload — which is read from
+ * Supabase on every request, so it is already current — and then revalidates
+ * against the public API:
+ *
+ *   - on mount, so the catalogue is right even if some layer cached the HTML;
+ *   - on window focus, so a tab left open while the owner worked in the admin
+ *     catches up when the customer comes back to it.
+ *
+ * The fetch never blocks and never throws: a failure simply leaves the
+ * server-rendered catalogue on screen, which is the best answer available.
+ *
+ * `localStorage` is still honoured in local mode, where there is no server-side
+ * catalogue at all and the browser's copy is the only one that exists.
+ */
+export function useStorefrontShop(initial: ShopData): ShopData {
+  const local = useLocalShop(initial);
+  const localMode = isLocalMode();
+  const [remote, setRemote] = useState<ShopData>(initial);
+
+  useEffect(() => {
+    if (localMode) return;
+
+    let cancelled = false;
+    const load = () => {
+      getPublicShop().then(
+        (data) => {
+          if (!cancelled) setRemote(data);
+        },
+        // Keep the server-rendered catalogue: it is fresh, and an empty grid
+        // would look like the shop is closed.
+        () => {},
+      );
+    };
+
+    load();
+    window.addEventListener("focus", load);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", load);
+    };
+  }, [localMode]);
+
+  return localMode ? local : remote;
 }
 
 /**

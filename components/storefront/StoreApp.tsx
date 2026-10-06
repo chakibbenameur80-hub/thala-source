@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { placeOrder, type PlaceOrderResult } from "@/lib/services/shop";
-import { useLocalShop } from "@/components/admin/useShop";
+import { useStorefrontShop } from "@/components/admin/useShop";
 import { SiteHeader } from "@/components/storefront/SiteHeader";
 import { Hero } from "@/components/storefront/Hero";
 import { ValueStrip } from "@/components/storefront/ValueStrip";
@@ -19,15 +19,15 @@ import type { CheckoutInput, Order, Product, ShopData } from "@/lib/types";
  *
  * Why is the catalogue client-side at all?
  *
- * The page itself is a Server Component and renders the *seed* catalogue, which
- * is what search engines and the first paint on a slow connection see. This
- * component then hydrates from the browser's own store (`localStorage`, or
- * Supabase), so whatever the admin has added or changed is reflected immediately
- * — without giving up server-rendered HTML.
+ * The page is a Server Component and renders the catalogue on the server, on
+ * every request, straight from Supabase. That HTML is what search engines and the
+ * first paint on a slow connection see. This component then revalidates against
+ * the public API, so a product added in the admin is on sale without a redeploy
+ * and without any `localStorage` being involved.
  *
- * The read happens after mount, never during render: reading `localStorage`
- * while rendering would produce different HTML on the server and the client and
- * trigger a hydration mismatch.
+ * The revalidation happens after mount, never during render: the server already
+ * sent a current catalogue, so reading anything browser-only while rendering
+ * would risk a hydration mismatch for no benefit.
  */
 
 /** No-op subscription: this store never changes, only the boolean it reports does. */
@@ -42,12 +42,12 @@ export function StoreApp({ initial }: { initial: ShopData }) {
   /**
    * The live shop state.
    *
-   * `localStorage` is read through `useSyncExternalStore`, which React compares
-   * by snapshot: the server renders `initial`, the client renders the stored shop
-   * immediately, and there is no extra render pass, no hydration mismatch (the
-   * markup React hydrates is the one it already produced) and no effect.
+   * `initial` is the server-rendered catalogue, read from Supabase for this
+   * request, so the first paint is already current. `useStorefrontShop` keeps it
+   * in step with the database afterwards by refetching the public API on mount and
+   * whenever the tab regains focus.
    */
-  const data = useLocalShop(initial);
+  const data = useStorefrontShop(initial);
 
   /**
    * `false` while server-rendering, `true` from the first client render — the
